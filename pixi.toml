@@ -1,0 +1,62 @@
+[project]
+authors = ["pablovela5620 <pablovela5620@gmail.com>"]
+channels = ["https://prefix.dev/conda-forge"]
+name = "MASt3R-SLAM"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[system-requirements]
+cuda = "12.4"
+
+[tasks]
+install-lietorch = { cmd = "python -m pip install git+https://github.com/princeton-vl/lietorch.git" }
+install-mast3r = { cmd = "python -m pip install -e thirdparty/mast3r", outputs = [
+    "thirdparty/mast3r/MAST3R.egg-info",
+] }
+install = { cmd = "python -m pip install --no-build-isolation -e . ", depends-on = [
+    "install-lietorch",
+    "install-mast3r",
+], outputs = [
+    "mast3r_slam_backends.cpython-311-x86_64-linux-gnu.so",
+], description = "Building Kernels and Installing, this could take a while..." }
+app = { cmd = "python tools/gradio-app.py", depends-on = ["install"] }
+
+[tasks._download-checkpoints]
+cmd = """
+    test -e checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth
+    || (
+        huggingface-cli download pablovela5620/mast3r-slam \
+        MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_codebook.pkl MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_trainingfree.pth --repo-type model \
+        --local-dir checkpoints/
+    )
+    """
+outputs = [
+    "checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth",
+    "checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_codebook.pkl",
+    "checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_trainingfree.pth",
+]
+description = "Downloads checkpoints"
+
+[pypi-dependencies]
+torch = { version = "==2.4.1", index = "https://download.pytorch.org/whl/cu124" }
+torchvision = { version = "==0.19.1", index = "https://download.pytorch.org/whl/cu124" }
+simplecv = { git = "https://github.com/pablovela5620/simplecv.git" }
+# lietorch = { url = "https://huggingface.co/datasets/pablovela5620/mast3r-slam-whls/resolve/main/lietorch-0.2-cp311-cp311-linux_x86_64.whl" }
+gradio-rerun = { url = "https://huggingface.co/datasets/pablovela5620/gradio-rr-wheels/resolve/main/gradio_rerun-0.0.11-py3-none-any.whl" }
+
+[dependencies]
+python = "3.11.*"
+numpy = "<2"
+cuda-nvcc = "12.4.*"
+cuda-version = "12.4.*"
+ffmpeg = ">=7.1.0,<8"
+pip = ">=25.0.1,<26"
+tyro = ">=0.9.1,<0.10"
+rerun-sdk = ">=0.22.0,<0.23"
+beartype = ">=0.20.0,<0.21"
+jaxtyping = ">=0.2.36,<0.3"
+eigen = ">=3.4.0,<4"
+gradio = "<5"
+py-opencv = ">=4.11.0,<5"
+pyserde = ">=0.23.0,<0.24"
+open3d = ">=0.19.0,<0.20"
