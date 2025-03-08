@@ -16,6 +16,7 @@ install-mast3r = { cmd = "python -m pip install -e thirdparty/mast3r", outputs =
 install = { cmd = "python -m pip install --no-build-isolation -e . ", depends-on = [
     "install-lietorch",
     "install-mast3r",
+    "_download-checkpoints",
 ], outputs = [
     "mast3r_slam_backends.cpython-311-x86_64-linux-gnu.so",
 ], description = "Building Kernels and Installing, this could take a while..." }
