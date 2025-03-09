@@ -44,7 +44,7 @@ All commands can be listed using `pixi task list`
 ```
 pixi run app
 ```
-### CLI (TODO)
+### CLI
 with pixi example task, this is the default that is more accurate
 ```bash
 pixi run example-base
