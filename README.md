@@ -34,7 +34,7 @@ Installation can take quite a while (10+ minutes) as it requires building, lieto
 ```bash
 git clone https://github.com/rerun-io/mast3r-slam.git
 cd mast3r-slam
-pixi run app
+pixi run example-base
 ```
 
 All commands can be listed using `pixi task list`
