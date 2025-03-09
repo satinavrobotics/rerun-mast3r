@@ -45,14 +45,21 @@ All commands can be listed using `pixi task list`
 pixi run app
 ```
 ### CLI (TODO)
-with pixi example task
+with pixi example task, this is the default that is more accurate
 ```bash
-pixi run TODO
+pixi run example-base
 ```
+
+this is the fast version that is less accurate, but much faster
+```bash
+pixi run example-fast
+```
+
+You can see all tasks by running `pixi task list`
 
 with python in pixi shell
 ```bash
-python TODO
+python tools/mast3r_slam_inference.py --dataset data/normal-apt-tour.MOV --img-size 512 --config config/base.yaml
 ```
 
 ## Acknowledgements
