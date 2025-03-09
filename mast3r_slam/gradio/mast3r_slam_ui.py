@@ -10,7 +10,6 @@ import rerun as rr
 import beartype
 from pathlib import Path
 import subprocess
-from typing import Any
 
 from mast3r_slam.config import load_config, config
 from mast3r_slam.dataloader import load_dataset
@@ -23,19 +22,16 @@ from mast3r_slam.mast3r_utils import (
     load_mast3r,
     mast3r_inference_mono,
 )
-from mast3r_slam.multiprocess_utils import FakeQueue, new_queue, try_get_msg
 from mast3r_slam.tracker import FrameTracker
-from mast3r_slam.visualization import WindowMsg
 import torch.multiprocessing as mp
 from mast3r_slam.api.inference import (
-    RerunLogger,
     run_backend,
-    create_blueprints,
-    save_kf_to_nerfstudio,
 )
 from multiprocessing.managers import SyncManager
 import gc
 import shutil
+from mast3r_slam.nerfstudio_utils import save_kf_to_nerfstudio
+from mast3r_slam.rerun_log_utils import create_blueprints, RerunLogger
 
 # Global variables to track the backend process, states, and model
 active_backend_process = None
@@ -84,9 +80,7 @@ def stop_streaming():
 
 
 @rr.thread_local_stream("rerun_example_streaming_blur")
-def streaming_mast3r_slam_fn(
-    *input_params,
-):
+def streaming_mast3r_slam_fn(*input_params, progress=gr.Progress()):
     global active_backend_process, active_states
     stream = rr.binary_stream()
 
@@ -116,13 +110,13 @@ def streaming_mast3r_slam_fn(
     blueprint = create_blueprints(parent_log_path=parent_log_path)
     rr.send_blueprint(blueprint)
 
+    progress(0.05, desc="Loading config")
     inference_config = "config/base.yaml"
     load_config(path=inference_config)
 
     manager: SyncManager = mp.Manager()
-    main2viz: FakeQueue | Any = new_queue(manager, use_fake=True)
-    viz2main = new_queue(manager, use_fake=True)
 
+    progress(0.1, desc="Loading dataset")
     dataset = load_dataset(dataset_path=str(video_path))
     dataset.subsample(config["dataset"]["subsample"])
 
@@ -145,8 +139,8 @@ def streaming_mast3r_slam_fn(
         )
         keyframes.set_intrinsics(K)
 
+    progress(0.15, desc="Starting Backend")
     tracker = FrameTracker(model, keyframes, DEVICE)
-    last_msg = WindowMsg()
 
     backend = mp.Process(
         target=run_backend, args=(inference_config, model, states, keyframes, K)
@@ -162,19 +156,6 @@ def streaming_mast3r_slam_fn(
     while True:
         rr.set_time_sequence(timeline="frame", sequence=i)
         mode: Mode = states.get_mode()
-        msg: WindowMsg | None = try_get_msg(viz2main)
-        last_msg: WindowMsg = msg if msg is not None else last_msg
-        if last_msg.is_terminated:
-            states.set_mode(Mode.TERMINATED)
-            break
-
-        if last_msg.is_paused and not last_msg.next:
-            states.pause()
-            time.sleep(0.01)
-            continue
-
-        if not last_msg.is_paused:
-            states.unpause()
 
         if i == len(dataset):
             states.set_mode(Mode.TERMINATED)
@@ -388,15 +369,13 @@ with gr.Blocks() as mast3r_slam_block:
         fn=show_video_file, inputs=input_params.to_list(), outputs=[viewer]
     )
 
-    # examples = gr.Examples(
-    #     examples=[
-    #         [
-    #             "https://huggingface.co/spaces/gradio/video_to_frames/resolve/main/sample_videos/dog-walking.mp4"
-    #         ],
-    #     ],
-    #     inputs=input_params.to_list(),
-    #     outputs=[viewer],
-    # )
+    examples = gr.Examples(
+        examples=[
+            ["data/normal-apt-tour.MOV"],
+        ],
+        inputs=input_params.to_list(),
+        outputs=[viewer, output_zip_file],
+    )
     blur_event = blur_btn.click(
         streaming_mast3r_slam_fn,
         inputs=input_params.to_list(),

@@ -1,12 +1,8 @@
 from dataclasses import dataclass
-import datetime
-import pathlib
 import sys
 import time
-import cv2
 import lietorch
 import torch
-import tqdm
 from mast3r_slam.global_opt import FactorGraph
 
 from mast3r_slam.config import load_config, config
@@ -18,71 +14,20 @@ from mast3r_slam.mast3r_utils import (
     load_retriever,
     mast3r_inference_mono,
 )
-from mast3r_slam.multiprocess_utils import new_queue, try_get_msg
 from mast3r_slam.tracker import FrameTracker
-from mast3r_slam.visualization import WindowMsg
-from mast3r_slam.lietorch_utils import as_SE3
 import torch.multiprocessing as mp
 from multiprocessing.managers import SyncManager
 from timeit import default_timer as timer
 import rerun as rr
-from jaxtyping import UInt8, Float32, Int
-import numpy as np
+
 
 from simplecv.rerun_log_utils import RerunTyroConfig
 from pathlib import Path
 from typing import Literal
 import rerun.blueprint as rrb
-from serde import serde
-from serde.json import to_json
-import open3d as o3d
 
-from simplecv.ops import conventions
-
-
-@serde
-class NSFrame:
-    file_path: str
-    transform_matrix: Float32[
-        np.ndarray, "4 4"
-    ]  # 4x4 camera transformation matrix in OpenGL format
-    colmap_im_id: int
-
-
-@serde
-class NerfstudioData:
-    w: int
-    h: int
-    fl_x: float
-    fl_y: float
-    cx: float
-    cy: float
-    k1: float
-    k2: float
-    p1: float
-    p2: float
-    camera_model: Literal["OPENCV"]
-    frames: list[NSFrame]
-    applied_transform: Float32[np.ndarray, "3 4"]
-    ply_file_path: Literal["sparse_pc.ply"]
-
-
-def create_blueprints(parent_log_path: Path) -> rrb.Blueprint:
-    blueprint = rrb.Blueprint(
-        rrb.Horizontal(
-            rrb.Spatial3DView(origin=parent_log_path),
-            rrb.Vertical(
-                rrb.Spatial2DView(
-                    origin=parent_log_path / "current_camera" / "pinhole"
-                ),
-                rrb.Spatial2DView(origin=parent_log_path / "last_keyframe"),
-                rrb.TextDocumentView(origin=parent_log_path),
-            ),
-            column_shares=(3, 1),
-        ),
-        collapse_panels=True,
-    )
-    return blueprint
+from mast3r_slam.rerun_log_utils import create_blueprints, RerunLogger
+from mast3r_slam.nerfstudio_utils import save_kf_to_nerfstudio
 
 
 def format_time(seconds):
@@ -95,444 +40,12 @@ def format_time(seconds):
 @dataclass
 class InferenceConfig:
     rr_config: RerunTyroConfig
-    dataset: str = (
-        "/home/pablo/0Dev/personal/MASt3R-SLAM/datasets/tum/rgbd_dataset_freiburg1_room"
-    )
+    dataset: str = "data/normal-apt-tour.MOV"
     config: str = "config/base.yaml"
     save_as: str = "default"
     no_viz: bool = False
-    img_size: Literal[224, 512] = 224
+    img_size: Literal[224, 512] = 512
     ns_save_path: None | Path = None
-
-
-def xy_grid(
-    W,
-    H,
-    device=None,
-    origin=(0, 0),
-    unsqueeze=None,
-    cat_dim=-1,
-    homogeneous=False,
-    **arange_kw,
-):
-    """Output a (H,W,2) array of int32
-    with output[j,i,0] = i + origin[0]
-         output[j,i,1] = j + origin[1]
-    """
-    if device is None:
-        # numpy
-        arange, meshgrid, stack, ones = np.arange, np.meshgrid, np.stack, np.ones
-    else:
-        # torch
-        arange = lambda *a, **kw: torch.arange(*a, device=device, **kw)
-        meshgrid, stack = torch.meshgrid, torch.stack
-        ones = lambda *a: torch.ones(*a, device=device)
-
-    tw, th = [arange(o, o + s, **arange_kw) for s, o in zip((W, H), origin)]
-    grid = meshgrid(tw, th, indexing="xy")
-    if homogeneous:
-        grid = grid + (ones((H, W)),)
-    if unsqueeze is not None:
-        grid = (grid[0].unsqueeze(unsqueeze), grid[1].unsqueeze(unsqueeze))
-    if cat_dim is not None:
-        grid = stack(grid, cat_dim)
-    return grid
-
-
-def estimate_focal_knowing_depth(
-    pts3d: Float32[torch.Tensor, "B H W 3"],
-    pp,
-    focal_mode="median",
-    min_focal=0.0,
-    max_focal=np.inf,
-):
-    """Reprojection method, for when the absolute depth is known:
-    1) estimate the camera focal using a robust estimator
-    2) reproject points onto true rays, minimizing a certain error
-    """
-    B, H, W, THREE = pts3d.shape
-    assert THREE == 3
-
-    # centered pixel grid
-    pixels = xy_grid(W, H, device=pts3d.device).view(1, -1, 2) - pp.view(
-        -1, 1, 2
-    )  # B,HW,2
-    pts3d = pts3d.flatten(1, 2)  # (B, HW, 3)
-
-    if focal_mode == "median":
-        with torch.no_grad():
-            # direct estimation of focal
-            u, v = pixels.unbind(dim=-1)
-            x, y, z = pts3d.unbind(dim=-1)
-            fx_votes = (u * z) / x
-            fy_votes = (v * z) / y
-
-            # assume square pixels, hence same focal for X and Y
-            f_votes = torch.cat((fx_votes.view(B, -1), fy_votes.view(B, -1)), dim=-1)
-            focal = torch.nanmedian(f_votes, dim=-1).values
-
-    elif focal_mode == "weiszfeld":
-        # init focal with l2 closed form
-        # we try to find focal = argmin Sum | pixel - focal * (x,y)/z|
-        xy_over_z = (pts3d[..., :2] / pts3d[..., 2:3]).nan_to_num(
-            posinf=0, neginf=0
-        )  # homogeneous (x,y,1)
-
-        dot_xy_px = (xy_over_z * pixels).sum(dim=-1)
-        dot_xy_xy = xy_over_z.square().sum(dim=-1)
-
-        focal = dot_xy_px.mean(dim=1) / dot_xy_xy.mean(dim=1)
-
-        # iterative re-weighted least-squares
-        for iter in range(10):
-            # re-weighting by inverse of distance
-            dis = (pixels - focal.view(-1, 1, 1) * xy_over_z).norm(dim=-1)
-            # print(dis.nanmean(-1))
-            w = dis.clip(min=1e-8).reciprocal()
-            # update the scaling with the new weights
-            focal = (w * dot_xy_px).mean(dim=1) / (w * dot_xy_xy).mean(dim=1)
-    else:
-        raise ValueError(f"bad {focal_mode=}")
-
-    focal_base = max(H, W) / (
-        2 * np.tan(np.deg2rad(60) / 2)
-    )  # size / 1.1547005383792515
-    focal = focal.clip(min=min_focal * focal_base, max=max_focal * focal_base)
-    # print(focal)
-    return focal
-
-
-def frame_to_intir(frame: Frame) -> tuple[tuple[float, float], tuple[float, float]]:
-    H = frame.img_shape.squeeze()[0].item()
-    W = frame.img_shape.squeeze()[1].item()
-
-    pp: Float32[torch.Tensor, "2"] = torch.tensor((W / 2, H / 2))
-    pts3d: Float32[torch.Tensor, "H W 3"] = frame.X_canon.clone().cpu().reshape(H, W, 3)
-    focal: float = float(
-        estimate_focal_knowing_depth(pts3d[None], pp, focal_mode="weiszfeld")
-    )
-
-    return (focal, focal), (float(pp[0].item()), float(pp[1].item()))
-
-
-def save_kf_to_nerfstudio(
-    ns_save_path: Path,
-    keyframes: SharedKeyframes,
-    parent_log_path: Path,
-    confidence_thresh: int = 100,
-):
-    ns_save_path.mkdir(parents=True, exist_ok=True)
-    # Create images subdirectory
-    images_dir = ns_save_path / "images"
-    images_dir.mkdir(exist_ok=True)
-
-    ns_frames_list = []
-    pcd_positions = []
-    pcd_colors = []
-    for i in tqdm.tqdm(range(len(keyframes)), desc="Processing keyframes"):
-        keyframe = keyframes[i]
-        rgb_img: Float32[torch.Tensor, "H W 3"] = keyframe.uimg
-        rgb_img: UInt8[np.ndarray, "H W 3"] = (rgb_img * 255).numpy().astype(np.uint8)
-        bgr_img = cv2.cvtColor(rgb_img, cv2.COLOR_RGB2BGR)
-        h, w, _ = bgr_img.shape
-
-        # Save the image with zero-padded numbering
-        image_filename = f"frame_{i + 1:05d}.png"  # Format: frame_00001.png
-        image_path = images_dir / image_filename
-        cv2.imwrite(str(image_path), bgr_img)
-        relative_image_path = f"images/{image_filename}"
-
-        se3_pose: lietorch.SE3 = as_SE3(keyframe.T_WC.cpu())
-        matb4x4: Float32[np.ndarray, "1 4 4"] = (
-            se3_pose.matrix().numpy().astype(dtype=np.float32)
-        )
-        mat4x4_cv: Float32[np.ndarray, "4 4"] = matb4x4[
-            0
-        ]  # Extract the first batch element
-
-        mat4x4_gl = conventions.convert_pose(
-            mat4x4_cv,
-            src_convention=conventions.CC.CV,
-            dst_convention=conventions.CC.GL,
-        )
-
-        mask = keyframe.C.cpu().numpy() > confidence_thresh
-
-        # Convert the mask from shape (h*w, 1) to shape (h*w,)
-        mask = mask.squeeze()  # Remove the trailing dimension to get a 1D boolean array
-
-        # Now apply the mask to both positions and colors
-        positions: Float32[np.ndarray, "num_points 3"] = keyframe.X_canon.cpu().numpy()
-        colors: UInt8[np.ndarray, "num_points 3"] = rgb_img.reshape(-1, 3)
-
-        masked_positions = positions[mask]  # Now selects entire rows where mask is True
-        masked_colors = colors[mask]
-
-        # Convert to homogeneous coordinates (add 1 as 4th coordinate)
-        homogeneous_positions = np.ones(
-            (masked_positions.shape[0], 4), dtype=np.float32
-        )
-        homogeneous_positions[:, :3] = masked_positions
-
-        # Apply transformation (points are column vectors: p_world = T_world_cam * p_cam)
-        world_positions = (mat4x4_cv @ homogeneous_positions.T).T[:, :3]
-
-        pcd_positions.append(world_positions)
-        pcd_colors.append(masked_colors)
-
-        ns_frames_list.append(
-            NSFrame(
-                file_path=relative_image_path,
-                transform_matrix=mat4x4_gl,
-                colmap_im_id=i,
-            )
-        )
-
-    # stack all the point clouds
-    pcd_positions: Float32[np.ndarray, "num_points 3"] = np.vstack(pcd_positions)
-    pcd_colors: UInt8[np.ndarray, "num_points 3"] = np.vstack(pcd_colors)
-    # normalize point colors to be between 0 and 1 and a float32
-    pcd_colors: Float32[np.ndarray, "num_points 3"] = (
-        pcd_colors.astype(np.float32) / 255.0
-    )
-    # Create an empty point cloud
-    pcd = o3d.geometry.PointCloud()
-
-    # Ensure your positions and colors are of the appropriate type (typically float64 for points)
-    pcd.points = o3d.utility.Vector3dVector(pcd_positions.astype(np.float64))
-    pcd.colors = o3d.utility.Vector3dVector(pcd_colors.astype(np.float64))
-
-    # downsample the point cloud
-    pcd = pcd.voxel_down_sample(voxel_size=0.03)
-
-    # save point cloud to file
-    o3d.io.write_point_cloud(str(ns_save_path / "sparse_pc.ply"), pcd)
-
-    # use the last keyframe to get the focal and principal point
-    focal, principal_point = frame_to_intir(keyframe)
-    # save to nerfstudio format
-    ns_data = NerfstudioData(
-        w=w,
-        h=h,
-        fl_x=focal[0],
-        fl_y=focal[1],
-        cx=principal_point[0],
-        cy=principal_point[1],
-        k1=0.0,
-        k2=0.0,
-        p1=0.0,
-        p2=0.0,
-        camera_model="OPENCV",
-        frames=ns_frames_list,
-        applied_transform=np.eye(3, 4, dtype=np.float32),
-        ply_file_path="sparse_pc.ply",
-    )
-    json_str: str = to_json(ns_data)
-    with open(ns_save_path / "transforms.json", "w") as f:
-        f.write(json_str)
-
-    return pcd
-
-
-class RerunLogger:
-    def __init__(self, parent_log_path: Path):
-        self.parent_log_path: Path = parent_log_path
-        # Create a 3x3 rotation matrix for 90-degree rotation around X-axis
-        rr.log(f"{self.parent_log_path}", rr.ViewCoordinates.RDF, static=True)
-        # this does not work and I don't know why
-        rr.log(
-            f"{parent_log_path}",
-            rr.Transform3D(
-                rotation=rr.RotationAxisAngle(axis=(0, 0, 1), radians=-np.pi / 4)
-            ),
-            static=True,
-        )
-
-        self.path_list = []
-        self.keyframe_logged_list = []
-        self.num_keyframes_logged = 0
-        self.conf_thresh = 7
-        self.image_plane_distance = 0.2
-
-    def log_frame(
-        self, current_frame: Frame, keyframes: SharedKeyframes, states: SharedStates
-    ):
-        # Add your rerun logging logic here
-        H = current_frame.img_shape.squeeze()[0].item()
-        W = current_frame.img_shape.squeeze()[1].item()
-
-        pp: Float32[torch.Tensor, "2"] = torch.tensor((W / 2, H / 2))
-        pts3d: Float32[torch.Tensor, "H W 3"] = (
-            current_frame.X_canon.clone().cpu().reshape(H, W, 3)
-        )
-        focal: float = float(
-            estimate_focal_knowing_depth(pts3d[None], pp, focal_mode="weiszfeld")
-        )
-
-        rgb_img: Float32[torch.Tensor, "H W 3"] = current_frame.uimg
-        rgb_img: UInt8[np.ndarray, "H W 3"] = (rgb_img * 255).numpy().astype(np.uint8)
-
-        se3_pose: lietorch.SE3 = as_SE3(current_frame.T_WC.cpu())
-        matb4x4: Float32[np.ndarray, "1 4 4"] = (
-            se3_pose.matrix().numpy().astype(dtype=np.float32)
-        )
-        mat4x4: Float32[np.ndarray, "4 4"] = matb4x4[
-            0
-        ]  # Extract the first batch element
-
-        mat4x4 = conventions.convert_pose(
-            mat4x4, src_convention=conventions.CC.CV, dst_convention=conventions.CC.GL
-        )
-
-        # Extract rotation (3x3) and translation (1x3) from the 4x4 transformation matrix
-        rotation_matrix: Float32[np.ndarray, "3 3"] = mat4x4[
-            :3, :3
-        ]  # Top-left 3x3 block
-        translation_vector: Float32[np.ndarray, "3"] = mat4x4[
-            :3, 3
-        ]  # Right column, first 3 elements
-
-        cam_log_path = self.parent_log_path / "current_camera"
-        rr.log(
-            f"{cam_log_path}",
-            rr.Transform3D(translation=translation_vector, mat3x3=rotation_matrix),
-        )
-        rr.log(
-            f"{cam_log_path}/pinhole",
-            rr.Pinhole(
-                focal_length=focal,
-                principal_point=pp.numpy(),
-                height=H,
-                width=W,
-                camera_xyz=rr.ViewCoordinates.RUB,
-                image_plane_distance=self.image_plane_distance * 2,
-            ),
-        )
-        rr.log(
-            f"{cam_log_path}/pinhole/image",
-            rr.Image(image=rgb_img, color_model=rr.ColorModel.RGB).compress(
-                jpeg_quality=75
-            ),
-        )
-        self.path_list.append(translation_vector.tolist())
-        rr.log(
-            f"{self.parent_log_path}/path",
-            rr.LineStrips3D(
-                strips=self.path_list,
-                colors=(255, 0, 0),
-                labels=("Camera Path"),
-            ),
-        )
-
-        with keyframes.lock:
-            N_keyframes = len(keyframes)
-            # dirty_idx = keyframes.get_dirty_idx()
-
-        for kf_idx in range(N_keyframes):
-            keyframe: Frame = keyframes[kf_idx]
-            se3_pose: lietorch.SE3 = as_SE3(keyframe.T_WC.cpu())
-            matb4x4: Float32[np.ndarray, "1 4 4"] = (
-                se3_pose.matrix().numpy().astype(dtype=np.float32)
-            )
-            mat4x4: Float32[np.ndarray, "4 4"] = matb4x4[
-                0
-            ]  # Extract the first batch element
-
-            # Extract rotation (3x3) and translation (1x3) from the 4x4 transformation matrix
-            rotation_matrix: Float32[np.ndarray, "3 3"] = mat4x4[
-                :3, :3
-            ]  # Top-left 3x3 block
-            translation_vector: Float32[np.ndarray, "3"] = mat4x4[
-                :3, 3
-            ]  # Right column, first 3 elements
-            cam_log_path = self.parent_log_path / "keyframes" / f"keyframe-{kf_idx}"
-            if kf_idx not in self.keyframe_logged_list:
-                kf_img: Float32[torch.Tensor, "H W 3"] = keyframe.uimg
-                kf_img: UInt8[np.ndarray, "H W 3"] = (
-                    (kf_img * 255).numpy().astype(np.uint8)
-                )
-                rr.log(
-                    f"{cam_log_path}/pinhole/image",
-                    rr.Image(image=kf_img, color_model=rr.ColorModel.RGB).compress(),
-                )
-                # create a mask based on the confidence values
-                mask = keyframe.C.cpu().numpy() > self.conf_thresh
-
-                # Convert the mask from shape (h*w, 1) to shape (h*w,)
-                mask = (
-                    mask.squeeze()
-                )  # Remove the trailing dimension to get a 1D boolean array
-
-                # Now apply the mask to both positions and colors
-                positions: Float32[np.ndarray, "num_points 3"] = (
-                    keyframe.X_canon.cpu().numpy()
-                )
-                colors: UInt8[np.ndarray, "num_points 3"] = kf_img.reshape(-1, 3)
-
-                masked_positions = positions[
-                    mask
-                ]  # Now selects entire rows where mask is True
-                masked_colors = colors[mask]
-                rr.log(
-                    f"{cam_log_path}/pointcloud",
-                    rr.Points3D(
-                        positions=masked_positions,
-                        colors=masked_colors,
-                    ),
-                )
-                self.keyframe_logged_list.append(kf_idx)
-            rr.log(
-                f"{cam_log_path}",
-                rr.Transform3D(translation=translation_vector, mat3x3=rotation_matrix),
-            )
-            rr.log(
-                f"{cam_log_path}/pinhole",
-                rr.Pinhole(
-                    focal_length=focal,
-                    principal_point=pp.numpy(),
-                    height=H,
-                    width=W,
-                    camera_xyz=rr.ViewCoordinates.RDF,
-                    image_plane_distance=self.image_plane_distance,
-                ),
-            )
-
-        # log the last keyframe image
-        if N_keyframes > 0:
-            last_kf: Frame = keyframes[N_keyframes - 1]
-            last_kf_img: Float32[torch.Tensor, "H W 3"] = last_kf.uimg
-            last_kf_img: UInt8[np.ndarray, "H W 3"] = (
-                (last_kf_img * 255).numpy().astype(np.uint8)
-            )
-            rr.log(
-                f"{self.parent_log_path}/last_keyframe",
-                rr.Image(image=last_kf_img, color_model=rr.ColorModel.RGB).compress(),
-            )
-
-        # Log the edges
-        with states.lock:
-            ii: Int[torch.Tensor, "num_edges"] = torch.tensor(
-                states.edges_ii, dtype=torch.long
-            )
-            jj: Int[torch.Tensor, "num_edges"] = torch.tensor(
-                states.edges_jj, dtype=torch.long
-            )
-            if ii.numel() > 0 and jj.numel() > 0:
-                T_WCi = lietorch.Sim3(keyframes.T_WC[ii, 0])
-                T_WCj = lietorch.Sim3(keyframes.T_WC[jj, 0])
-        if ii.numel() > 0 and jj.numel() > 0:
-            t_WCi = T_WCi.matrix()[:, :3, 3].cpu().numpy()
-            t_WCj = T_WCj.matrix()[:, :3, 3].cpu().numpy()
-            line_strips = []
-            for t_i, t_j in zip(t_WCi, t_WCj):
-                line_strips.append(t_i.tolist())
-                line_strips.append(t_j.tolist())
-            rr.log(
-                f"{self.parent_log_path}/edges",
-                rr.LineStrips3D(
-                    strips=line_strips, colors=(0, 255, 0), labels=("Factor Graph")
-                ),
-            )
 
 
 def mast3r_slam_inference(inf_config: InferenceConfig):
@@ -540,8 +53,6 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.set_grad_enabled(False)
     device = "cuda:0"
-    save_frames = False
-    datetime_now: str = str(datetime.datetime.now()).replace(" ", "_")
 
     ## rerun setup
     parent_log_path = Path("/world")
@@ -555,8 +66,6 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
     print(config)
 
     manager: SyncManager = mp.Manager()
-    main2viz = new_queue(manager, use_fake=True)
-    viz2main = new_queue(manager, use_fake=True)
 
     dataset = load_dataset(inf_config.dataset, img_size=inf_config.img_size)
     dataset.subsample(config["dataset"]["subsample"])
@@ -592,7 +101,6 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
             recon_file.unlink()
 
     tracker = FrameTracker(model, keyframes, device)
-    last_msg = WindowMsg()
 
     backend = mp.Process(
         target=run_backend, args=(inf_config.config, model, states, keyframes, K)
@@ -603,34 +111,15 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
     fps_timer: float = time.time()
     start_time = timer()
 
-    frames = []
-
     while True:
-        if i > 100:
-            break
         rr.set_time_sequence(timeline="frame", sequence=i)
         mode: Mode = states.get_mode()
-        msg: WindowMsg | None = try_get_msg(viz2main)
-        last_msg: WindowMsg = msg if msg is not None else last_msg
-        if last_msg.is_terminated:
-            states.set_mode(Mode.TERMINATED)
-            break
-
-        if last_msg.is_paused and not last_msg.next:
-            states.pause()
-            time.sleep(0.01)
-            continue
-
-        if not last_msg.is_paused:
-            states.unpause()
 
         if i == len(dataset):
             states.set_mode(Mode.TERMINATED)
             break
 
         timestamp, img = dataset[i]
-        if save_frames:
-            frames.append(img)
 
         # get frames last camera pose
         T_WC: lietorch.Sim3 = (
@@ -702,20 +191,11 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
         eval.save_keyframes(
             save_dir / "keyframes" / seq_name, dataset.timestamps, keyframes
         )
-    if save_frames:
-        savedir = pathlib.Path(f"logs/frames/{datetime_now}")
-        savedir.mkdir(exist_ok=True, parents=True)
-        print(len(frames))
-        for i, frame in tqdm.tqdm(enumerate(frames), total=len(frames)):
-            frame = (frame * 255).clip(0, 255)
-            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-            cv2.imwrite(f"{savedir}/{i}.png", frame)
 
     if inf_config.ns_save_path is not None:
         pcd = save_kf_to_nerfstudio(
             ns_save_path=inf_config.ns_save_path,
             keyframes=keyframes,
-            parent_log_path=parent_log_path,
         )
         rr.log(
             f"{parent_log_path}/final_pointcloud",
