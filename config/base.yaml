@@ -1,3 +1,13 @@
+model:
+  # path (relative to your working directory) to the .pth checkpoint
+  weights_path: "checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth"
+  # the (height, width) your dataloader returns
+  # replace these with the actual values you saw in get_img_shape()
+  img_size: [224, 448]
+
+  # patch‐size used when training that checkpoint (almost always 16)
+  patch_size: 16
+
 use_calib: False
 single_thread: False
 dataset:
@@ -54,5 +64,5 @@ retrieval:
   min_thresh: 5e-3
 
 reloc:
-  min_match_frac: 0.3
-  strict: True
+  min_match_frac: 0.0
+  strict: False
