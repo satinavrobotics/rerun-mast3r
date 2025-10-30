@@ -47,6 +47,7 @@ class InferenceConfig:
     img_size: Literal[224, 512] = 512
     ns_save_path: None | Path = None
     all_frames: bool = False  # Save poses for all frames, not just keyframes
+    rerun_server_addr: str | None = None  # Optional rerun server address (e.g., "master_slam_cli:9878")
 
 
 def mast3r_slam_inference(inf_config: InferenceConfig):
@@ -56,6 +57,11 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
     device = "cuda:0"
 
     ## rerun setup
+    # If a custom rerun server address is provided, connect to it
+    if inf_config.rerun_server_addr:
+        print(f"Connecting to rerun server at {inf_config.rerun_server_addr}")
+        rr.connect_grpc(f"http://{inf_config.rerun_server_addr}/proxy", flush_timeout_sec=None)
+
     parent_log_path = Path("/world")
     rr_logger = RerunLogger(parent_log_path)
     # create a blueprint
