@@ -144,6 +144,11 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
             states.set_mode(Mode.TRACKING)
             states.set_frame(frame)
             rr_logger.log_frame(frame, keyframes, states)
+
+            # Collect all frames if --all-frames flag is set
+            if inf_config.all_frames:
+                all_frames.append(frame)
+
             i += 1
             continue
 
