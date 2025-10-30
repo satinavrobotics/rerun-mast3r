@@ -8,6 +8,28 @@ Wrapper for the Rerun-enabled MASt3R-SLAM entry point.
 3) Reads the resulting trajectory .txt and dumps your JSON
 """
 
+# Patch numpy.asarray to support 'copy' parameter for numpy < 2.0
+# This is needed for rerun-sdk 0.23.1 compatibility with numpy 1.26.4
+import numpy as _np
+_orig_asarray = _np.asarray
+def _patched_asarray(a, dtype=None, order=None, *, like=None, copy=None):
+    """Backport copy parameter support for numpy < 2.0"""
+    # Build kwargs, filtering out None values
+    kwargs = {}
+    if dtype is not None:
+        kwargs['dtype'] = dtype
+    if order is not None:
+        kwargs['order'] = order
+    # Note: 'like' parameter not supported in numpy 1.26.4, skip it
+
+    if copy is True:
+        # Explicit copy requested - use np.array which always copies
+        return _np.array(a, copy=True, **kwargs)
+    else:
+        # Default behavior - no copy or copy=False/None
+        return _orig_asarray(a, **kwargs)
+_np.asarray = _patched_asarray
+
 import os, json, math
 from pathlib import Path
 import tyro
@@ -88,3 +110,12 @@ async def estimate_pose(
 # ------------------------------------------------------------------
 if __name__ == "__main__":
     main()
+ 
+'''  
+python sati_master_slam.py \
+  --dataset /workspace/dataset/rgb_no23vcF_69_0 \
+  --config config/base.yaml \
+  --save-as stanford_out \
+  --img-size 512 \
+  --no-viz
+''' 
