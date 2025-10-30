@@ -5,6 +5,8 @@ Provides two modes of operation:
 1. Batch Processing: Process entire dataset folders
 2. Real-time Streaming: Process frames iteratively from simulation
 
+Uses in-memory SLAM sessions for efficient real-time processing.
+
 Author: CImbi
 """
 
@@ -15,16 +17,23 @@ import subprocess
 import base64
 import json
 import shutil
+import numpy as np
+import cv2
 from pathlib import Path
+
+# Import SLAM session manager
+import sys
+sys.path.insert(0, '/workspace/rerun_mast3r')
+from mast3r_slam.slam_session import SLAMSession, PoseEstimate
 
 app = FastAPI(
     title="MASt3R-SLAM Server",
     description="SLAM server supporting both batch processing and real-time streaming",
-    version="1.0.0"
+    version="2.0.0"
 )
 
-# Session storage for real-time streaming
-active_sessions: Dict[str, Dict] = {}
+# Active SLAM sessions (in-memory)
+active_sessions: Dict[str, SLAMSession] = {}
 
 # ============================================================
 # Request/Response Models
@@ -44,7 +53,8 @@ class SlamInitRequest(BaseModel):
     session_id: str
     config_path: str = "config/base.yaml"
     img_size: int = 512
-    rerun_server_addr: Optional[str] = None
+    rerun_server_addr: Optional[str] = "master_slam_cli:9878"
+    real_time: bool = True  # Real-time mode: process frames incrementally
 
 class SlamFrameRequest(BaseModel):
     """Real-time streaming: Process single frame"""
@@ -70,19 +80,22 @@ def health():
 @app.post("/estimate_pose")
 async def estimate_pose(request: EstimatePoseRequest):
     """
-    Run MASt3R-SLAM inference on a dataset directory.
+    Run MASt3R-SLAM inference on a dataset directory (batch mode).
 
     Args:
         dataset_path: Path to dataset directory (e.g., /workspace/dataset/rgb_no23vcF_69_0)
         config_path: Path to config YAML file (default: config/base.yaml)
         save_as: Output name for results (default: api_req)
         img_size: Image size for processing - 224 or 512 (default: 512)
-        all_frames: Save poses for all frames, not just keyframes (default: False)
-        rerun_server_addr: Optional rerun server address (e.g., master_slam_cli:9878)
+        all_frames: Save poses for all frames, not just keyframes (default: True)
+        rerun_server_addr: Optional rerun server address (default: master_slam_cli:9878)
 
     Returns:
         JSON with trajectory data: {"position": [[x,y], ...], "yaw": [yaw, ...]}
     """
+    # For now, use subprocess approach until we fully refactor inference.py
+    # TODO: Migrate to session-based approach
+
     # Build command
     cmd = [
         "python", "/workspace/rerun_mast3r/sati_master_slam.py",
@@ -103,7 +116,7 @@ async def estimate_pose(request: EstimatePoseRequest):
     result = subprocess.run(cmd, capture_output=True, text=True, cwd="/workspace/rerun_mast3r")
 
     # Check for output file
-    out_file = Path(f"/workspace/rerun_mast3r/{request.save_as}_traj_data.json")
+    out_file = Path(f"/workspace/rerun_mast3r/logs/{request.save_as}_traj_data.json")
     if out_file.exists():
         trajectory = json.loads(out_file.read_text())
         return {
@@ -131,136 +144,138 @@ async def estimate_pose(request: EstimatePoseRequest):
 @app.post("/slam/init")
 async def slam_init(request: SlamInitRequest):
     """
-    Initialize a real-time SLAM session for frame-by-frame processing.
-    
-    Creates a temporary directory to store incoming frames.
+    Initialize a SLAM session for real-time frame-by-frame processing.
+
+    Creates an in-memory SLAM session that persists until finalized.
     """
     if request.session_id in active_sessions:
         raise HTTPException(
             status_code=400,
             detail=f"Session {request.session_id} already exists. Use a different session_id or finalize the existing session."
         )
-    
-    # Create temporary directory for this session
-    session_dir = Path(f"/tmp/slam_session_{request.session_id}")
-    session_dir.mkdir(parents=True, exist_ok=True)
-    
-    active_sessions[request.session_id] = {
-        "session_dir": str(session_dir),
-        "config_path": request.config_path,
-        "img_size": request.img_size,
-        "rerun_server_addr": request.rerun_server_addr,
-        "frame_count": 0,
-        "status": "ready"
-    }
-    
-    return {
-        "status": "success",
-        "session_id": request.session_id,
-        "message": "SLAM session initialized. Ready to receive frames."
-    }
+
+    try:
+        # Create in-memory SLAM session
+        session = SLAMSession(
+            session_id=request.session_id,
+            config_path=request.config_path,
+            img_size=request.img_size,
+            real_time=request.real_time,
+            rerun_server_addr=request.rerun_server_addr,
+            output_dir="/workspace/rerun_mast3r/logs"
+        )
+
+        # Initialize for real-time mode
+        session.initialize_real_time_mode()
+
+        # Store session
+        active_sessions[request.session_id] = session
+
+        return {
+            "status": "success",
+            "session_id": request.session_id,
+            "mode": "real-time" if request.real_time else "batch",
+            "message": "SLAM session initialized. Ready to receive frames."
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to initialize SLAM session: {str(e)}"
+        )
 
 @app.post("/slam/process_frame")
 async def slam_process_frame(request: SlamFrameRequest):
     """
     Process a single frame in real-time streaming mode.
-    
-    Saves the frame to the session directory. Actual SLAM processing
-    happens when finalize is called.
+
+    Returns pose estimate immediately after processing.
     """
     if request.session_id not in active_sessions:
         raise HTTPException(
             status_code=404,
             detail=f"Session {request.session_id} not found. Initialize session first with /slam/init"
         )
-    
+
     session = active_sessions[request.session_id]
-    session_dir = Path(session["session_dir"])
-    
-    # Decode base64 image
+
     try:
-        image_data = base64.b64decode(request.image_base64)
+        # Decode base64 image
+        image_bytes = base64.b64decode(request.image_base64)
+
+        # Convert to numpy array
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+        if image is None:
+            raise ValueError("Failed to decode image")
+
+        # Process frame through SLAM
+        pose = session.add_frame(image)
+
+        if pose is None:
+            # Still initializing, no pose yet
+            return {
+                "status": "initializing",
+                "session_id": request.session_id,
+                "frame_id": request.frame_id,
+                "message": "Frame received, SLAM still initializing"
+            }
+
+        # Return pose immediately
+        return {
+            "status": "success",
+            "session_id": request.session_id,
+            "frame_id": request.frame_id,
+            "pose": {
+                "position": list(pose.position),
+                "yaw": float(pose.yaw),
+                "timestamp": pose.timestamp
+            },
+            "total_frames": session.frame_count
+        }
+
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid base64 image: {str(e)}")
-    
-    # Save frame with zero-padded filename (e.g., 00000.png, 00001.png)
-    frame_path = session_dir / f"{request.frame_id:05d}.png"
-    frame_path.write_bytes(image_data)
-    
-    session["frame_count"] = max(session["frame_count"], request.frame_id + 1)
-    
-    return {
-        "status": "success",
-        "session_id": request.session_id,
-        "frame_id": request.frame_id,
-        "total_frames": session["frame_count"]
-    }
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error processing frame: {str(e)}"
+        )
 
 @app.post("/slam/finalize")
 async def slam_finalize(request: SlamFinalizeRequest):
     """
-    Finalize SLAM session and run inference on all collected frames.
-    
-    Returns the complete trajectory.
+    Finalize SLAM session and return complete trajectory.
+
+    Saves results to disk and cleans up session.
     """
     if request.session_id not in active_sessions:
         raise HTTPException(
             status_code=404,
             detail=f"Session {request.session_id} not found"
         )
-    
+
     session = active_sessions[request.session_id]
-    session_dir = session["session_dir"]
-    
-    # Build command to run SLAM on collected frames
-    cmd = [
-        "python", "/workspace/rerun_mast3r/sati_master_slam.py",
-        "--dataset", session_dir,
-        "--config", session["config_path"],
-        "--save-as", request.save_as,
-        "--img-size", str(session["img_size"]),
-        "--rr-config.headless",
-    ]
-    
-    if request.all_frames:
-        cmd.append("--all-frames")
-    
-    if session["rerun_server_addr"]:
-        cmd.extend(["--rerun-server-addr", session["rerun_server_addr"]])
-    
-    # Run inference
-    result = subprocess.run(cmd, capture_output=True, text=True, cwd="/workspace/rerun_mast3r")
-    
-    # Check for output file
-    out_file = Path(f"/workspace/rerun_mast3r/{request.save_as}_traj_data.json")
-    
-    # Cleanup session
+
     try:
-        shutil.rmtree(session_dir)
-    except Exception as e:
-        print(f"Warning: Failed to cleanup session directory: {e}")
-    
-    del active_sessions[request.session_id]
-    
-    if out_file.exists():
-        trajectory = json.loads(out_file.read_text())
+        # Finalize session (saves trajectory to disk)
+        result = session.finalize(save_as=request.save_as)
+
+        # Remove from active sessions
+        del active_sessions[request.session_id]
+
         return {
             "status": "success",
-            "session_id": request.session_id,
-            "trajectory": trajectory,
-            "num_frames": len(trajectory.get("position", [])),
-            "stdout": result.stdout,
-            "stderr": result.stderr
+            "session_id": result["session_id"],
+            "trajectory": result["trajectory"],
+            "num_frames": result["num_frames"],
+            "duration": result["duration"],
+            "output_file": result["output_file"]
         }
-    else:
+
+    except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail={
-                "status": "error",
-                "message": "SLAM inference failed - no output file generated",
-                "stdout": result.stdout,
-                "stderr": result.stderr
-            }
+            detail=f"Error finalizing session: {str(e)}"
         )
 
 @app.get("/slam/sessions")
@@ -270,10 +285,40 @@ async def list_sessions():
         "active_sessions": [
             {
                 "session_id": sid,
-                "frame_count": session["frame_count"],
-                "status": session["status"]
+                "frame_count": session.frame_count,
+                "mode": "real-time" if session.real_time else "batch",
+                "num_poses": len(session.poses)
             }
             for sid, session in active_sessions.items()
         ]
+    }
+
+@app.get("/slam/current_pose/{session_id}")
+async def get_current_pose(session_id: str):
+    """Get the most recent pose estimate for a session"""
+    if session_id not in active_sessions:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Session {session_id} not found"
+        )
+
+    session = active_sessions[session_id]
+    pose = session.get_current_pose()
+
+    if pose is None:
+        return {
+            "status": "no_pose",
+            "message": "No pose available yet (still initializing)"
+        }
+
+    return {
+        "status": "success",
+        "session_id": session_id,
+        "pose": {
+            "frame_id": pose.frame_id,
+            "position": list(pose.position),
+            "yaw": float(pose.yaw),
+            "timestamp": pose.timestamp
+        }
     }
 

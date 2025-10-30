@@ -48,6 +48,7 @@ class InferenceConfig:
     ns_save_path: None | Path = None
     all_frames: bool = False  # Save poses for all frames, not just keyframes
     rerun_server_addr: str | None = None  # Optional rerun server address (e.g., "master_slam_cli:9878")
+    real_time: bool = False  # Real-time mode: output pose after each frame instead of at the end
 
 
 def mast3r_slam_inference(inf_config: InferenceConfig):
