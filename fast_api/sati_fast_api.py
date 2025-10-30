@@ -36,8 +36,8 @@ class EstimatePoseRequest(BaseModel):
     config_path: str = "config/base.yaml"
     save_as: str = "api_req"
     img_size: int = 512
-    all_frames: bool = False
-    rerun_server_addr: Optional[str] = None
+    all_frames: bool = True  # Default to True - save all frames, not just keyframes
+    rerun_server_addr: Optional[str] = "master_slam_cli:9878"  # Default to CLI server
 
 class SlamInitRequest(BaseModel):
     """Real-time streaming: Initialize SLAM session"""
