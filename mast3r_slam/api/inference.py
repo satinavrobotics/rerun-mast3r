@@ -46,6 +46,7 @@ class InferenceConfig:
     no_viz: bool = False
     img_size: Literal[224, 512] = 512
     ns_save_path: None | Path = None
+    all_frames: bool = False  # Save poses for all frames, not just keyframes
 
 
 def mast3r_slam_inference(inf_config: InferenceConfig):
@@ -106,6 +107,9 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
         target=run_backend, args=(inf_config.config, model, states, keyframes, K)
     )
     backend.start()
+
+    # Collect all frames if --all-frames flag is set
+    all_frames = [] if inf_config.all_frames else None
 
     i = 0
     fps_timer: float = time.time()
@@ -176,6 +180,11 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
 
         ## rerun log stuff
         rr_logger.log_frame(frame, keyframes, states)
+
+        # Collect all frames if --all-frames flag is set
+        if inf_config.all_frames:
+            all_frames.append(frame)
+
         # log time
         if i % 30 == 0:
             FPS = i / (time.time() - fps_timer)
@@ -184,12 +193,14 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
 
     if dataset.save_results:
         save_dir, seq_name = eval.prepare_savedir(inf_config, dataset)
-        eval.save_ATE(save_dir, f"{seq_name}.txt", dataset.timestamps, keyframes)
+        # Use all_frames if --all-frames flag is set, otherwise use keyframes
+        frames_to_save = all_frames if inf_config.all_frames else keyframes
+        eval.save_ATE(save_dir, f"{seq_name}.txt", dataset.timestamps, frames_to_save)
         eval.save_reconstruction(
-            save_dir, f"{seq_name}.pt", dataset.timestamps, keyframes
+            save_dir, f"{seq_name}.pt", dataset.timestamps, frames_to_save
         )
         eval.save_keyframes(
-            save_dir / "keyframes" / seq_name, dataset.timestamps, keyframes
+            save_dir / "keyframes" / seq_name, dataset.timestamps, frames_to_save
         )
 
     if inf_config.ns_save_path is not None:
@@ -204,7 +215,10 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
 
     print("done")
     print(f"Inference time: {format_time(timer() - start_time)}")
-    print(f"Processed {len(keyframes)}")
+    if inf_config.all_frames:
+        print(f"Processed {len(all_frames)} frames (all frames mode)")
+    else:
+        print(f"Processed {len(keyframes)} keyframes")
     backend.join()
     if not inf_config.no_viz:
         print("All visualization processes terminated")
