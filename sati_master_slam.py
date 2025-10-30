@@ -70,42 +70,81 @@ def main():
 # ------------------------------------------------------------------
 # FastAPI server wrapper (no separate file needed) - CImbi
 # ------------------------------------------------------------------
-from fastapi import FastAPI, UploadFile, File, Form
-import tempfile, subprocess
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import Optional
+import subprocess
 
 app = FastAPI(title="MASt3R-SLAM Server")
+
+class EstimatePoseRequest(BaseModel):
+    dataset_path: str
+    config_path: str = "config/base.yaml"
+    save_as: str = "api_req"
+    img_size: int = 512
+    all_frames: bool = False
+    rerun_server_addr: Optional[str] = None
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
 @app.post("/estimate_pose")
-async def estimate_pose(
-    image: UploadFile = File(...),
-    config: str = Form("default"),
-    save_as: str = Form("api_req")
-):
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
-    tmp.write(await image.read())
-    tmp.close()
+async def estimate_pose(request: EstimatePoseRequest):
+    """
+    Run MASt3R-SLAM inference on a dataset directory.
 
-    # Call our own CLI logic for consistency
+    Args:
+        dataset_path: Path to dataset directory (e.g., /workspace/dataset/rgb_no23vcF_69_0)
+        config_path: Path to config YAML file (default: config/base.yaml)
+        save_as: Output name for results (default: api_req)
+        img_size: Image size for processing - 224 or 512 (default: 512)
+        all_frames: Save poses for all frames, not just keyframes (default: False)
+        rerun_server_addr: Optional rerun server address (e.g., master_slam_cli:9878)
+
+    Returns:
+        JSON with trajectory data: {"position": [[x,y], ...], "yaw": [yaw, ...]}
+    """
+    # Build command
     cmd = [
         "python", "/workspace/rerun_mast3r/sati_master_slam.py",
-        "--dataset", tmp.name,
-        "--config", config,
-        "--save-as", save_as,
-        "--no-viz",
+        "--dataset", request.dataset_path,
+        "--config", request.config_path,
+        "--save-as", request.save_as,
+        "--img-size", str(request.img_size),
+        "--rr-config.headless",
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    out_file = Path(f"{save_as}_traj_data.json")
-    if out_file.exists():
-        data = json.loads(out_file.read_text())
-    else:
-        data = {"stdout": result.stdout, "stderr": result.stderr}
 
-    os.unlink(tmp.name)
-    return data
+    if request.all_frames:
+        cmd.append("--all-frames")
+
+    if request.rerun_server_addr:
+        cmd.extend(["--rerun-server-addr", request.rerun_server_addr])
+
+    # Run inference
+    result = subprocess.run(cmd, capture_output=True, text=True, cwd="/workspace/rerun_mast3r")
+
+    # Check for output file
+    out_file = Path(f"/workspace/rerun_mast3r/{request.save_as}_traj_data.json")
+    if out_file.exists():
+        trajectory = json.loads(out_file.read_text())
+        return {
+            "status": "success",
+            "trajectory": trajectory,
+            "num_frames": len(trajectory.get("position", [])),
+            "stdout": result.stdout,
+            "stderr": result.stderr
+        }
+    else:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "status": "error",
+                "message": "Inference failed - no output file generated",
+                "stdout": result.stdout,
+                "stderr": result.stderr
+            }
+        )
 
 # ------------------------------------------------------------------
 if __name__ == "__main__":
@@ -115,6 +154,11 @@ if __name__ == "__main__":
 docker exec -it master_slam_api bash
 cd rerun_mast3r
 conda activate mast3r-slam
+
+# On local pc:
+rerun --connect rerun+http://0.0.0.0:9878/proxy
+
+# In api or via client call:
 python sati_master_slam.py \
   --dataset /workspace/dataset/rgb_no23vcF_69_0 \
   --config config/base.yaml \
