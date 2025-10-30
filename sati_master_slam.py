@@ -112,6 +112,8 @@ if __name__ == "__main__":
     main()
  
 '''  
+cd rerun_mast3r
+conda activate mast3r-slam
 python sati_master_slam.py \
   --dataset /workspace/dataset/rgb_no23vcF_69_0 \
   --config config/base.yaml \
