@@ -238,6 +238,20 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
     if not inf_config.no_viz:
         print("All visualization processes terminated")
 
+    # Keep server alive if serving for visualization
+    if inf_config.rr_config.serve:
+        print("\n" + "="*60)
+        print("Rerun server is running for visualization:")
+        print(f"  - gRPC: rerun --connect rerun+http://localhost:9876/proxy")
+        print(f"  - Web:  http://localhost:9090")
+        print("Press Ctrl+C to stop the server")
+        print("="*60 + "\n")
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            print("\nShutting down rerun server...")
+
 
 def relocalization(frame, keyframes, factor_graph, retrieval_database):
     # we are adding and then removing from the keyframe, so we need to be careful.
