@@ -117,5 +117,6 @@ python sati_master_slam.py \
   --config config/base.yaml \
   --save-as stanford_out \
   --img-size 512 \
-  --no-viz
+  --no-viz \
+  --all-frames
 ''' 

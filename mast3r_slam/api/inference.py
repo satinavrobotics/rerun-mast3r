@@ -193,8 +193,18 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
 
     if dataset.save_results:
         save_dir, seq_name = eval.prepare_savedir(inf_config, dataset)
+
         # Use all_frames if --all-frames flag is set, otherwise use keyframes
-        frames_to_save = all_frames if inf_config.all_frames else keyframes
+        if inf_config.all_frames:
+            # Create a temporary SharedKeyframes object to hold all frames
+            h, w = dataset.get_img_shape()[0]
+            all_frames_shared = SharedKeyframes(manager, h, w, buffer=len(all_frames))
+            for frame in all_frames:
+                all_frames_shared.append(frame)
+            frames_to_save = all_frames_shared
+        else:
+            frames_to_save = keyframes
+
         eval.save_ATE(save_dir, f"{seq_name}.txt", dataset.timestamps, frames_to_save)
         eval.save_reconstruction(
             save_dir, f"{seq_name}.pt", dataset.timestamps, frames_to_save
