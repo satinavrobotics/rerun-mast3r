@@ -8,14 +8,6 @@ Wrapper for the Rerun-enabled MASt3R-SLAM entry point.
 3) Reads the resulting trajectory .txt and dumps your JSON
 """
 
-import numpy as _np
-_orig_asarray = _np.asarray
-def _patched_asarray(a, dtype=None, copy=False):
-    if copy:
-        return _np.array(a, dtype=dtype, copy=copy)
-    return _orig_asarray(a, dtype=dtype)
-_np.asarray = _patched_asarray
-
 import os, json, math
 from pathlib import Path
 import tyro
