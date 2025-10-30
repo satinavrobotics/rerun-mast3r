@@ -6,6 +6,7 @@ import numpy as np
 import torch
 import pyrealsense2 as rs
 import yaml
+from pathlib import Path
 
 from mast3r_slam.mast3r_utils import resize_img
 from mast3r_slam.config import config
@@ -265,7 +266,7 @@ class MP4Dataset(MonocularDataset):
         timestamp = idx / self.fps
         self.timestamps.append(timestamp)
         return img
-
+    
 
 class RGBFiles(MonocularDataset):
     def __init__(self, dataset_path, img_size: Literal[224, 512]):
@@ -322,6 +323,27 @@ class Intrinsics:
 
         return Intrinsics(img_size, W, H, K, K_opt, distortion, mapx, mapy)
 
+class SatiDataset(RGBFiles):
+    def __init__(self, dataset_path: str, img_size: Literal[224,512]):
+        super().__init__(dataset_path, img_size)
+
+        # load your intrinsics.yaml
+        cfg_path = Path(__file__).parents[1] / "config" / "intrinsics.yaml"
+        with open(cfg_path, "r") as f:
+            data = yaml.safe_load(f)
+
+        W, H = data["width"], data["height"]
+        calib = data["calibration"]  # a list of 8 numbers
+
+        # always undistort (we do want to apply it)
+        self.camera_intrinsics = Intrinsics.from_calib(
+            img_size,
+            W,
+            H,
+            calib,
+            always_undistort=True
+        )
+        
 
 def load_dataset(dataset_path: str, img_size: Literal[224, 512] = 512):
     split_dataset_type = dataset_path.split("/")
@@ -337,6 +359,8 @@ def load_dataset(dataset_path: str, img_size: Literal[224, 512] = 512):
         return RealsenseDataset()
     if "webcam" in split_dataset_type:
         return Webcam()
+    if any(p.lower().startswith("data") for p in split_dataset_type):
+        return SatiDataset(dataset_path, img_size)
 
     ext = split_dataset_type[-1].split(".")[-1]
     if ext in ["mp4", "avi", "MOV", "mov"]:

@@ -9,8 +9,6 @@ Wrapper for the Rerun-enabled MASt3R-SLAM entry point.
 """
 
 import numpy as _np
-
-# Monkey-patch np.asarray to accept copy=… by routing to np.array
 _orig_asarray = _np.asarray
 def _patched_asarray(a, dtype=None, copy=False):
     if copy:
@@ -18,25 +16,20 @@ def _patched_asarray(a, dtype=None, copy=False):
     return _orig_asarray(a, dtype=dtype)
 _np.asarray = _patched_asarray
 
-import os
-os.environ.setdefault("RERUN_SPAWN", "false")  
-
-import json
-import math
-import yaml
+import os, json, math
 from pathlib import Path
-
 import tyro
-from mast3r_slam.api.inference import InferenceConfig, mast3r_slam_inference
+
+# Disable rerun spawn unless explicitly allowed
+os.environ.setdefault("RERUN_SPAWN", "false")
 
 def main():
-    # 1) Parse CLI flags into their dataclass.
-    cfg = tyro.cli(InferenceConfig)
+    # Import here to avoid import errors when loading as FastAPI app
+    from mast3r_slam.api.inference import InferenceConfig, mast3r_slam_inference
 
-    # _this_ kicks off gRPC + SLAM logging
+    cfg = tyro.cli(InferenceConfig)
     mast3r_slam_inference(cfg)
 
-    # 3) Read back the dumped trajectory:
     seq = Path(cfg.dataset).stem
     traj = Path("logs") / cfg.save_as / f"{seq}.txt"
     if not traj.exists():
@@ -49,7 +42,6 @@ def main():
             continue
         x, y = float(parts[1]), float(parts[2])
         qx, qy, qz, qw = map(float, parts[4:8])
-        # yaw = atan2(2*(w*z + x*y), 1 − 2*(y²+z²))
         t0 = 2 * (qw * qz + qx * qy)
         t1 = 1 - 2 * (qy * qy + qz * qz)
         yaw = math.atan2(t0, t1)
@@ -60,7 +52,47 @@ def main():
     json_path = Path(cfg.save_as + "_traj_data.json")
     json_path.write_text(json.dumps(out, indent=2))
     print(f"Wrote {{'position':{len(positions)}, 'yaw':{len(yaws)}}} to {json_path}")
-    
 
+# ------------------------------------------------------------------
+# FastAPI server wrapper (no separate file needed) - CImbi
+# ------------------------------------------------------------------
+from fastapi import FastAPI, UploadFile, File, Form
+import tempfile, subprocess
+
+app = FastAPI(title="MASt3R-SLAM Server")
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+@app.post("/estimate_pose")
+async def estimate_pose(
+    image: UploadFile = File(...),
+    config: str = Form("default"),
+    save_as: str = Form("api_req")
+):
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
+    tmp.write(await image.read())
+    tmp.close()
+
+    # Call our own CLI logic for consistency
+    cmd = [
+        "python", "/workspace/rerun_mast3r/sati_master_slam.py",
+        "--dataset", tmp.name,
+        "--config", config,
+        "--save-as", save_as,
+        "--no-viz",
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    out_file = Path(f"{save_as}_traj_data.json")
+    if out_file.exists():
+        data = json.loads(out_file.read_text())
+    else:
+        data = {"stdout": result.stdout, "stderr": result.stderr}
+
+    os.unlink(tmp.name)
+    return data
+
+# ------------------------------------------------------------------
 if __name__ == "__main__":
-    main() # /workspace/mnt/sati-data/unstructured_datasets/Lelan/Lelan/dataset_LeLaN/dataset_LeLaN_sacson/Feb-27-2023-soda3_prop/00000015/image
+    main()

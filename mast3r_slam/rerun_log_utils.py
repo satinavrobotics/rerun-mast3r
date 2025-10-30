@@ -32,8 +32,8 @@ def create_blueprints(parent_log_path: Path) -> rrb.Blueprint:
 class RerunLogger:
     def __init__(self, parent_log_path: Path):
         self.parent_log_path: Path = parent_log_path
-        # Create a 3x3 rotation matrix for 90-degree rotation around X-axis
-        rr.log(f"{self.parent_log_path}", rr.ViewCoordinates.RDF, static=True)
+        # Set view coordinates - use the enum directly without logging
+        # The ViewCoordinates.RDF is just for reference, we don't need to log it
         # this does not work and I don't know why
         rr.log(
             f"{parent_log_path}",
