@@ -112,6 +112,7 @@ if __name__ == "__main__":
     main()
  
 '''  
+docker exec -it master_slam_api bash
 cd rerun_mast3r
 conda activate mast3r-slam
 python sati_master_slam.py \
@@ -119,6 +120,7 @@ python sati_master_slam.py \
   --config config/base.yaml \
   --save-as stanford_out \
   --img-size 512 \
-  --no-viz \
-  --all-frames
+  --all-frames \
+  --rr-config.headless \
+  --rerun-server-addr master_slam_cli:9878
 ''' 

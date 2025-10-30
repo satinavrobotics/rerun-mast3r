@@ -60,7 +60,7 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
     # If a custom rerun server address is provided, connect to it
     if inf_config.rerun_server_addr:
         print(f"Connecting to rerun server at {inf_config.rerun_server_addr}")
-        rr.connect_grpc(f"http://{inf_config.rerun_server_addr}/proxy", flush_timeout_sec=None)
+        rr.connect_grpc(f"rerun+http://{inf_config.rerun_server_addr}/proxy", flush_timeout_sec=None)
 
     parent_log_path = Path("/world")
     rr_logger = RerunLogger(parent_log_path)
