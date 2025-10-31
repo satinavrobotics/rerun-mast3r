@@ -420,6 +420,12 @@ class SLAMSession:
             return
 
         try:
+            # Change to rerun_mast3r directory so relative paths work (same as batch API)
+            import os
+            original_cwd = os.getcwd()
+            os.chdir("/workspace/rerun_mast3r")
+            print(f"[SLAM Session {self.session_id}] Changed working directory to: {os.getcwd()}")
+
             print(f"[SLAM Session {self.session_id}] Starting SLAM inference (will block waiting for images)...")
             mast3r_slam_inference(inf_config)
             print(f"[SLAM Session {self.session_id}] ✓ SLAM inference completed successfully")
@@ -428,8 +434,9 @@ class SLAMSession:
             import traceback
             traceback.print_exc()
         finally:
-            # Restore original functions
+            # Restore original working directory and functions
             print(f"[SLAM Session {self.session_id}] Restoring original functions")
+            os.chdir(original_cwd)
             inf_module.load_dataset = original_load_dataset
             SharedStates.__init__ = original_shared_states_init
 
