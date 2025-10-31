@@ -190,6 +190,18 @@ class SLAMSession:
         if not real_time:
             raise ValueError("slam_session.py only supports real_time=True. For batch processing, use sati_master_slam.py directly.")
 
+        # Load SLAM config (populates global config variable needed by Intrinsics.from_calib)
+        print(f"[SLAM Session {session_id}] Loading SLAM config from {config_path}...")
+        try:
+            from mast3r_slam.config import load_config
+            load_config(config_path)
+            print(f"[SLAM Session {session_id}] ✓ SLAM config loaded")
+        except Exception as e:
+            print(f"[SLAM Session {session_id}] ✗ FAILED to load SLAM config: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
+
         # Streaming dataset
         print(f"[SLAM Session {session_id}] Creating StreamingDataset...")
         try:
