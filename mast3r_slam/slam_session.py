@@ -180,7 +180,7 @@ class SLAMSession:
         self.start_time = time.time()
 
         # JSON Lines output file for incremental pose logging
-        self.pose_file_path = self.output_dir / f"{session_id}_poses.jsonl"
+        self.pose_file_path = self.output_dir / f"{session_id}_poses.json"
         self.pose_file = None
 
         # Reference to SLAM states object (set by SLAM thread when it starts)
@@ -504,10 +504,8 @@ class SLAMSession:
         
         # Write to JSON Lines file (one pose per line)
         pose_dict = {
-            "frame_id": pose.frame_id,
             "position": list(pose.position),
             "yaw": float(pose.yaw),
-            "timestamp": pose.timestamp
         }
         
         if pose.confidence is not None:
