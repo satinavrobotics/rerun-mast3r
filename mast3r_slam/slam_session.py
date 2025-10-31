@@ -302,42 +302,41 @@ class SLAMSession:
         print(f"[SLAM Session {self.session_id}] SLAM thread started, attempting imports...")
 
         try:
+            import tyro
             from mast3r_slam.api.inference import InferenceConfig, mast3r_slam_inference
-            print(f"[SLAM Session {self.session_id}] ✓ Imported InferenceConfig, mast3r_slam_inference")
+            print(f"[SLAM Session {self.session_id}] ✓ Imported tyro, InferenceConfig, mast3r_slam_inference")
         except Exception as e:
-            print(f"[SLAM Session {self.session_id}] ✗ FAILED to import InferenceConfig: {e}")
+            print(f"[SLAM Session {self.session_id}] ✗ FAILED to import: {e}")
             import traceback
             traceback.print_exc()
             return
 
-        # Create a simple dummy config object (avoid RerunTyroConfig which uses tyro.cli)
-        print(f"[SLAM Session {self.session_id}] Creating inference config...")
+        # Use tyro.cli() the same way as sati_master_slam.py, but with programmatic args
+        print(f"[SLAM Session {self.session_id}] Creating inference config with tyro.cli()...")
         print(f"  - rerun_server_addr: {self.rerun_server_addr}")
         print(f"  - config_path: {self.config_path}")
         print(f"  - img_size: {self.img_size}")
 
-        # Create inference config with a simple dummy rr_config
         try:
-            # Create a simple object that has the attributes InferenceConfig expects
-            # Only 'serve' attribute is actually used (checked at line 249 in inference.py)
-            # The rerun connection uses inf_config.rerun_server_addr, not rr_config
-            class DummyRRConfig:
-                headless = True
-                serve = False  # This is checked at line 249 in inference.py
-                connect = True
+            # Build CLI arguments programmatically (same as sati_master_slam.py would receive)
+            args = [
+                "--dataset", "streaming",  # Dummy path, we use self.dataset instead
+                "--config", self.config_path,
+                "--save-as", self.session_id,
+                "--img-size", str(self.img_size),
+                "--all-frames",
+                "--real-time",
+                "--rr-config.headless",
+            ]
 
-            print(f"[SLAM Session {self.session_id}] Creating InferenceConfig with dummy rr_config...")
-            inf_config = InferenceConfig(
-                rr_config=DummyRRConfig(),
-                dataset="streaming",  # Dummy path, we use self.dataset instead
-                config=self.config_path,
-                save_as=self.session_id,
-                img_size=self.img_size,
-                all_frames=True,  # Save all frame poses
-                rerun_server_addr=self.rerun_server_addr,  # This is what actually matters for rerun connection
-                real_time=True
-            )
-            print(f"[SLAM Session {self.session_id}] ✓ Created InferenceConfig")
+            if self.rerun_server_addr:
+                args.extend(["--rerun-server-addr", self.rerun_server_addr])
+
+            print(f"[SLAM Session {self.session_id}] tyro.cli args: {args}")
+
+            # Use tyro.cli() with programmatic args (same as sati_master_slam.py)
+            inf_config = tyro.cli(InferenceConfig, args=args)
+            print(f"[SLAM Session {self.session_id}] ✓ Created InferenceConfig via tyro.cli()")
         except Exception as e:
             print(f"[SLAM Session {self.session_id}] ✗ FAILED to create InferenceConfig: {e}")
             import traceback
