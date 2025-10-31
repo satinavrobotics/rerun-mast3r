@@ -364,14 +364,11 @@ class SLAMSession:
             traceback.print_exc()
             return
 
-        # Monkey-patch the dataset loading, multiprocessing, and model loading
+        # Monkey-patch the dataset loading and multiprocessing to use our streaming dataset
         print(f"[SLAM Session {self.session_id}] Setting up monkey-patches...")
         try:
             import mast3r_slam.api.inference as inf_module
-            import mast3r_slam.mast3r_utils as mast3r_utils_module
-
             original_load_dataset = inf_module.load_dataset
-            original_load_mast3r = mast3r_utils_module.load_mast3r
 
             # Patch the mp module that inference.py imported
             original_mp_set_start_method = inf_module.mp.set_start_method
@@ -379,16 +376,6 @@ class SLAMSession:
             def patched_load_dataset(dataset_path, img_size):
                 print(f"[SLAM Session {self.session_id}] Using streaming dataset instead of {dataset_path}")
                 return self.dataset
-
-            def patched_load_mast3r(path=None, device="cuda"):
-                """Patch to use absolute path for checkpoint file"""
-                weights_path = (
-                    "/workspace/rerun_mast3r/checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth"
-                    if path is None
-                    else path
-                )
-                print(f"[SLAM Session {self.session_id}] Loading MASt3R model from: {weights_path}")
-                return original_load_mast3r(path=weights_path, device=device)
 
             def patched_set_start_method(method, force=False):
                 """Patch to avoid 'context has already been set' error"""
@@ -403,8 +390,7 @@ class SLAMSession:
 
             inf_module.load_dataset = patched_load_dataset
             inf_module.mp.set_start_method = patched_set_start_method
-            mast3r_utils_module.load_mast3r = patched_load_mast3r
-            print(f"[SLAM Session {self.session_id}] ✓ Dataset, multiprocessing, and model loading monkey-patches installed")
+            print(f"[SLAM Session {self.session_id}] ✓ Dataset and multiprocessing monkey-patches installed")
         except Exception as e:
             print(f"[SLAM Session {self.session_id}] ✗ FAILED to monkey-patch: {e}")
             import traceback
@@ -445,8 +431,6 @@ class SLAMSession:
             # Restore original functions
             print(f"[SLAM Session {self.session_id}] Restoring original functions")
             inf_module.load_dataset = original_load_dataset
-            inf_module.mp.set_start_method = original_mp_set_start_method
-            mast3r_utils_module.load_mast3r = original_load_mast3r
             SharedStates.__init__ = original_shared_states_init
 
 
