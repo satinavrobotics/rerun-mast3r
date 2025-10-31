@@ -319,11 +319,12 @@ class SLAMSession:
         # Create inference config with a simple dummy rr_config
         try:
             # Create a simple object that has the attributes InferenceConfig expects
+            # Only 'serve' attribute is actually used (checked at line 249 in inference.py)
+            # The rerun connection uses inf_config.rerun_server_addr, not rr_config
             class DummyRRConfig:
-                def __init__(self):
-                    self.headless = True
-                    self.serve = False  # This is checked at line 249 in inference.py
-                    self.connect = bool(self.rerun_server_addr)
+                headless = True
+                serve = False  # This is checked at line 249 in inference.py
+                connect = True
 
             print(f"[SLAM Session {self.session_id}] Creating InferenceConfig with dummy rr_config...")
             inf_config = InferenceConfig(
@@ -361,18 +362,10 @@ class SLAMSession:
             traceback.print_exc()
             return
 
-        # Monkey-patch the inference function to capture the states object
-        original_mast3r_slam_inference = mast3r_slam_inference
-
-        def patched_mast3r_slam_inference(cfg):
-            print(f"[SLAM Session {self.session_id}] Running patched SLAM inference...")
-            print(f"[SLAM Session {self.session_id}] About to call mast3r_slam_inference()...")
-
-            # Import here to access the states object created inside mast3r_slam_inference
-            import multiprocessing as mp
+        # Monkey-patch SharedStates.__init__ to capture the states object
+        print(f"[SLAM Session {self.session_id}] Setting up SharedStates monkey-patch...")
+        try:
             from mast3r_slam.frame import SharedStates
-
-            # We'll monkey-patch SharedStates.__init__ to capture the states object
             original_shared_states_init = SharedStates.__init__
 
             def patched_shared_states_init(states_self, *args, **kwargs):
@@ -385,29 +378,25 @@ class SLAMSession:
             # Apply the patch
             SharedStates.__init__ = patched_shared_states_init
             print(f"[SLAM Session {self.session_id}] ✓ SharedStates monkey-patch installed")
-
-            try:
-                # Run SLAM inference (blocks until dataset.terminated = True)
-                print(f"[SLAM Session {self.session_id}] Calling original mast3r_slam_inference()...")
-                result = original_mast3r_slam_inference(cfg)
-                print(f"[SLAM Session {self.session_id}] SLAM inference finished")
-                return result
-            finally:
-                # Restore original SharedStates.__init__
-                SharedStates.__init__ = original_shared_states_init
+        except Exception as e:
+            print(f"[SLAM Session {self.session_id}] ✗ FAILED to monkey-patch SharedStates: {e}")
+            import traceback
+            traceback.print_exc()
+            return
 
         try:
             print(f"[SLAM Session {self.session_id}] Starting SLAM inference (will block waiting for images)...")
-            patched_mast3r_slam_inference(inf_config)
+            mast3r_slam_inference(inf_config)
             print(f"[SLAM Session {self.session_id}] ✓ SLAM inference completed successfully")
         except Exception as e:
             print(f"[SLAM Session {self.session_id}] ✗ SLAM inference error: {e}")
             import traceback
             traceback.print_exc()
         finally:
-            # Restore original function
-            print(f"[SLAM Session {self.session_id}] Restoring original load_dataset function")
+            # Restore original functions
+            print(f"[SLAM Session {self.session_id}] Restoring original functions")
             inf_module.load_dataset = original_load_dataset
+            SharedStates.__init__ = original_shared_states_init
 
 
 
