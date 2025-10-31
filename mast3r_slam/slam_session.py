@@ -347,16 +347,30 @@ class SLAMSession:
         print(f"[SLAM Session {self.session_id}] Setting up dataset monkey-patch...")
         try:
             import mast3r_slam.api.inference as inf_module
+            import multiprocessing as mp
+
             original_load_dataset = inf_module.load_dataset
+            original_set_start_method = mp.set_start_method
 
             def patched_load_dataset(dataset_path, img_size):
                 print(f"[SLAM Session {self.session_id}] Using streaming dataset instead of {dataset_path}")
                 return self.dataset
 
+            def patched_set_start_method(method, force=False):
+                """Patch to avoid 'context has already been set' error in background thread"""
+                try:
+                    original_set_start_method(method, force=True)
+                except RuntimeError as e:
+                    if "context has already been set" in str(e):
+                        print(f"[SLAM Session {self.session_id}] Multiprocessing context already set, skipping")
+                    else:
+                        raise
+
             inf_module.load_dataset = patched_load_dataset
-            print(f"[SLAM Session {self.session_id}] ✓ Dataset monkey-patch installed")
+            mp.set_start_method = patched_set_start_method
+            print(f"[SLAM Session {self.session_id}] ✓ Dataset and multiprocessing monkey-patches installed")
         except Exception as e:
-            print(f"[SLAM Session {self.session_id}] ✗ FAILED to monkey-patch dataset: {e}")
+            print(f"[SLAM Session {self.session_id}] ✗ FAILED to monkey-patch: {e}")
             import traceback
             traceback.print_exc()
             return
@@ -395,6 +409,7 @@ class SLAMSession:
             # Restore original functions
             print(f"[SLAM Session {self.session_id}] Restoring original functions")
             inf_module.load_dataset = original_load_dataset
+            mp.set_start_method = original_set_start_method
             SharedStates.__init__ = original_shared_states_init
 
 
