@@ -40,7 +40,7 @@ active_sessions: Dict[str, SLAMSession] = {}
 # ============================================================
 
 class EstimatePoseRequest(BaseModel):
-    """Batch processing: Process entire dataset folder"""
+    """Batch processing: Process entire dataset folder using sati_master_slam.py"""
     dataset_path: str
     config_path: str = "config/base.yaml"
     save_as: str = "api_req"
@@ -69,7 +69,7 @@ class SlamFinalizeRequest(BaseModel):
     all_frames: bool = True
 
 # ============================================================
-# Batch Processing Endpoints
+# Batch Processing Endpoints (using sati_master_slam.py)
 # ============================================================
 
 @app.get("/health")
@@ -81,6 +81,7 @@ def health():
 async def estimate_pose(request: EstimatePoseRequest):
     """
     Run MASt3R-SLAM inference on a dataset directory (batch mode).
+    Uses sati_master_slam.py to process entire folder of images.
 
     Args:
         dataset_path: Path to dataset directory (e.g., /workspace/dataset/rgb_no23vcF_69_0)
@@ -93,10 +94,7 @@ async def estimate_pose(request: EstimatePoseRequest):
     Returns:
         JSON with trajectory data: {"position": [[x,y], ...], "yaw": [yaw, ...]}
     """
-    # For now, use subprocess approach until we fully refactor inference.py
-    # TODO: Migrate to session-based approach
-
-    # Build command
+    # Build command to run sati_master_slam.py
     cmd = [
         "python", "/workspace/rerun_mast3r/sati_master_slam.py",
         "--dataset", request.dataset_path,

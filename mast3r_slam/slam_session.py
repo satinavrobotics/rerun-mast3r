@@ -154,35 +154,18 @@ class SLAMSession:
         self.pose_file_path = self.output_dir / f"{session_id}_poses.jsonl"
         self.pose_file = None
 
+        # Validate mode
+        if not real_time:
+            raise ValueError("slam_session.py only supports real_time=True. For batch processing, use sati_master_slam.py directly.")
+
         # Streaming dataset
         self.dataset = StreamingDataset(img_size=img_size)
 
         print(f"[SLAM Session {session_id}] Created")
-        print(f"  Mode: {'Real-time' if real_time else 'Batch'}")
+        print(f"  Mode: Real-time streaming")
         print(f"  Config: {config_path}")
         print(f"  Image size: {img_size}")
         print(f"  Output: {self.pose_file_path}")
-    
-    def initialize_batch_mode(self, dataset_path: str):
-        """
-        Initialize for batch processing of a dataset folder.
-
-        Args:
-            dataset_path: Path to folder containing images (00000.png, 00001.png, ...)
-        """
-        print(f"[SLAM Session {self.session_id}] Initializing batch mode with dataset: {dataset_path}")
-
-        # Lazy import
-        from mast3r_slam.dataloader import SatiDataset
-
-        # Load dataset from folder
-        self.dataset = SatiDataset(dataset_path, self.img_size)
-
-        # Open pose output file
-        self.pose_file = open(self.pose_file_path, 'w')
-
-        self.is_initialized = True
-        print(f"[SLAM Session {self.session_id}] Batch mode initialized. Dataset has {len(self.dataset)} frames")
     
     def initialize_real_time_mode(self):
         """
@@ -383,58 +366,6 @@ class SLAMSession:
 
         self.frame_count += 1
         return pose
-    
-    def process_batch(self, all_frames: bool = True) -> List[PoseEstimate]:
-        """
-        Process all frames in batch mode.
-        
-        Args:
-            all_frames: If True, save poses for all frames. If False, only keyframes.
-            
-        Returns:
-            List of all pose estimates
-        """
-        if not self.is_initialized:
-            raise RuntimeError("Session not initialized. Call initialize_batch_mode() first.")
-        
-        if self.real_time:
-            raise RuntimeError("process_batch() only works in batch mode")
-        
-        print(f"[SLAM Session {self.session_id}] Processing batch...")
-        
-        # Run inference using existing pipeline
-        # This will process all frames and populate self.poses
-        
-        # Create inference config
-        inf_config = InferenceConfig(
-            dataset_path=str(self.dataset.dataset_path),
-            config_path=self.config_path,
-            img_size=self.img_size,
-            all_frames=all_frames,
-            rerun_server_addr=self.rerun_server_addr,
-            save_as=self.session_id,
-            real_time=self.real_time
-        )
-        
-        # Create rerun config
-        rr_config = RerunTyroConfig(
-            headless=True,
-            serve=False,
-            connect=bool(self.rerun_server_addr)
-        )
-        
-        # Run inference
-        # NOTE: This still uses the old subprocess-based approach
-        # We need to refactor inference.py to return poses incrementally
-        print(f"[SLAM Session {self.session_id}] Running SLAM inference...")
-        
-        # For now, call the existing run_inference function
-        # TODO: Refactor to process frames incrementally and call _store_pose() for each
-        
-        # Placeholder: Read poses from output file after inference completes
-        # In real implementation, poses would be stored during inference
-        
-        return self.poses
     
     def _store_pose(self, pose: PoseEstimate):
         """
