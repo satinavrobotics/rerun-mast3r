@@ -56,13 +56,21 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.set_grad_enabled(False)
 
-    # Auto-detect device: use CUDA if available, otherwise fall back to CPU
+    # Auto-detect device: try CUDA first, fall back to CPU if allocation fails (unlicensed GPU)
+    device = "cpu"  # Default to CPU
     if torch.cuda.is_available():
-        device = "cuda:0"
-        print("Using CUDA device")
+        try:
+            # Try to allocate a small tensor to verify CUDA actually works
+            test_tensor = torch.zeros(1, device="cuda:0")
+            del test_tensor
+            device = "cuda:0"
+            print("Using CUDA device")
+        except RuntimeError as e:
+            print(f"CUDA detected but allocation failed (unlicensed GPU?): {e}")
+            print("Falling back to CPU")
+            device = "cpu"
     else:
-        device = "cpu"
-        print("CUDA not available, falling back to CPU")
+        print("CUDA not available, using CPU")
 
     ## rerun setup
     # If a custom rerun server address is provided, connect to it
