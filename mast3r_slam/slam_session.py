@@ -14,33 +14,12 @@ Key Insight: We don't reimplement SLAM - we just feed it a streaming dataset and
 Author: CImbi
 """
 
-# Patch numpy.asarray to support 'copy' parameter for numpy < 2.0
-# This is needed for rerun-sdk 0.23.1 compatibility with numpy 1.26.4
-import numpy as np
-_orig_asarray = np.asarray
-def _patched_asarray(a, dtype=None, order=None, *, like=None, copy=None):
-    """Backport copy parameter support for numpy < 2.0"""
-    # Build kwargs, filtering out None values
-    kwargs = {}
-    if dtype is not None:
-        kwargs['dtype'] = dtype
-    if order is not None:
-        kwargs['order'] = order
-    # Note: 'like' parameter not supported in numpy 1.26.4, skip it
-
-    if copy is True:
-        # Explicit copy requested - use np.array which always copies
-        return np.array(a, copy=True, **kwargs)
-    else:
-        # Default behavior - no copy or copy=False/None
-        return _orig_asarray(a, **kwargs)
-np.asarray = _patched_asarray
-
 import json
 import time
 import math
 from pathlib import Path
 from typing import Optional, Dict, List, Tuple, Literal
+import numpy as np
 from dataclasses import dataclass
 import cv2
 import yaml
@@ -188,15 +167,13 @@ class SLAMSession:
         img_size: int = 512,
         real_time: bool = False,
         rerun_server_addr: Optional[str] = None,
-        enable_rerun: bool = True,  # New parameter to control rerun visualization
         output_dir: str = "logs"
     ):
         self.session_id = session_id
         self.config_path = config_path
         self.img_size = img_size
         self.real_time = real_time
-        self.rerun_server_addr = rerun_server_addr if enable_rerun else None
-        self.enable_rerun = enable_rerun
+        self.rerun_server_addr = rerun_server_addr
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -244,9 +221,7 @@ class SLAMSession:
         print(f"  Mode: Real-time streaming")
         print(f"  Config: {config_path}")
         print(f"  Image size: {img_size}")
-        print(f"  Rerun: {'Enabled' if self.enable_rerun else 'Disabled'}")
-        if self.enable_rerun:
-            print(f"  Rerun server: {self.rerun_server_addr}")
+        print(f"  Rerun server: {rerun_server_addr}")
         print(f"  Output: {self.pose_file_path}")
     
     def initialize_real_time_mode(self):
@@ -323,84 +298,86 @@ class SLAMSession:
         print(f"[SLAM Session {self.session_id}] SLAM thread started, attempting imports...")
 
         try:
-            import tyro
             from mast3r_slam.api.inference import InferenceConfig, mast3r_slam_inference
-            print(f"[SLAM Session {self.session_id}] ✓ Imported tyro, InferenceConfig, mast3r_slam_inference")
+            print(f"[SLAM Session {self.session_id}] ✓ Imported InferenceConfig, mast3r_slam_inference")
         except Exception as e:
-            print(f"[SLAM Session {self.session_id}] ✗ FAILED to import: {e}")
+            print(f"[SLAM Session {self.session_id}] ✗ FAILED to import InferenceConfig: {e}")
             import traceback
             traceback.print_exc()
             return
 
-        # Use tyro.cli() the same way as sati_master_slam.py, but with programmatic args
-        print(f"[SLAM Session {self.session_id}] Creating inference config with tyro.cli()...")
+        try:
+            from simplecv.rerun_log_utils import RerunTyroConfig
+            print(f"[SLAM Session {self.session_id}] ✓ Imported RerunTyroConfig")
+        except Exception as e:
+            print(f"[SLAM Session {self.session_id}] ✗ FAILED to import RerunTyroConfig: {e}")
+            import traceback
+            traceback.print_exc()
+            return
+
+        print(f"[SLAM Session {self.session_id}] Creating inference config...")
         print(f"  - rerun_server_addr: {self.rerun_server_addr}")
         print(f"  - config_path: {self.config_path}")
         print(f"  - img_size: {self.img_size}")
 
+        # Create inference config
         try:
-            # Build CLI arguments programmatically (same as sati_master_slam.py would receive)
-            args = [
-                "--dataset", "streaming",  # Dummy path, we use self.dataset instead
-                "--config", self.config_path,
-                "--save-as", self.session_id,
-                "--img-size", str(self.img_size),
-                "--all-frames",
-                "--real-time",
-                "--rr-config.headless",
-            ]
+            print(f"[SLAM Session {self.session_id}] Creating RerunTyroConfig...")
+            rr_config = RerunTyroConfig(
+                headless=True,
+                serve=False,
+                connect=bool(self.rerun_server_addr)
+            )
+            print(f"[SLAM Session {self.session_id}] ✓ Created RerunTyroConfig")
 
-            if self.rerun_server_addr:
-                args.extend(["--rerun-server-addr", self.rerun_server_addr])
-
-            print(f"[SLAM Session {self.session_id}] tyro.cli args: {args}")
-
-            # Use tyro.cli() with programmatic args (same as sati_master_slam.py)
-            inf_config = tyro.cli(InferenceConfig, args=args)
-            print(f"[SLAM Session {self.session_id}] ✓ Created InferenceConfig via tyro.cli()")
+            print(f"[SLAM Session {self.session_id}] Creating InferenceConfig...")
+            inf_config = InferenceConfig(
+                rr_config=rr_config,
+                dataset="streaming",  # Dummy path, we use self.dataset instead
+                config=self.config_path,
+                save_as=self.session_id,
+                img_size=self.img_size,
+                all_frames=True,  # Save all frame poses
+                rerun_server_addr=self.rerun_server_addr,
+                real_time=True
+            )
+            print(f"[SLAM Session {self.session_id}] ✓ Created InferenceConfig")
         except Exception as e:
             print(f"[SLAM Session {self.session_id}] ✗ FAILED to create InferenceConfig: {e}")
             import traceback
             traceback.print_exc()
             return
 
-        # Monkey-patch the dataset loading and multiprocessing to use our streaming dataset
-        print(f"[SLAM Session {self.session_id}] Setting up monkey-patches...")
+        # Monkey-patch the dataset loading to use our streaming dataset
+        print(f"[SLAM Session {self.session_id}] Setting up dataset monkey-patch...")
         try:
             import mast3r_slam.api.inference as inf_module
             original_load_dataset = inf_module.load_dataset
-
-            # Patch the mp module that inference.py imported
-            original_mp_set_start_method = inf_module.mp.set_start_method
 
             def patched_load_dataset(dataset_path, img_size):
                 print(f"[SLAM Session {self.session_id}] Using streaming dataset instead of {dataset_path}")
                 return self.dataset
 
-            def patched_set_start_method(method, force=False):
-                """Patch to avoid 'context has already been set' error"""
-                try:
-                    original_mp_set_start_method(method, force=True)
-                    print(f"[SLAM Session {self.session_id}] Set multiprocessing start method: {method}")
-                except RuntimeError as e:
-                    if "context has already been set" in str(e):
-                        print(f"[SLAM Session {self.session_id}] Multiprocessing context already set, skipping")
-                    else:
-                        raise
-
             inf_module.load_dataset = patched_load_dataset
-            inf_module.mp.set_start_method = patched_set_start_method
-            print(f"[SLAM Session {self.session_id}] ✓ Dataset and multiprocessing monkey-patches installed")
+            print(f"[SLAM Session {self.session_id}] ✓ Dataset monkey-patch installed")
         except Exception as e:
-            print(f"[SLAM Session {self.session_id}] ✗ FAILED to monkey-patch: {e}")
+            print(f"[SLAM Session {self.session_id}] ✗ FAILED to monkey-patch dataset: {e}")
             import traceback
             traceback.print_exc()
             return
 
-        # Monkey-patch SharedStates.__init__ to capture the states object
-        print(f"[SLAM Session {self.session_id}] Setting up SharedStates monkey-patch...")
-        try:
+        # Monkey-patch the inference function to capture the states object
+        original_mast3r_slam_inference = mast3r_slam_inference
+
+        def patched_mast3r_slam_inference(cfg):
+            print(f"[SLAM Session {self.session_id}] Running patched SLAM inference...")
+            print(f"[SLAM Session {self.session_id}] About to call mast3r_slam_inference()...")
+
+            # Import here to access the states object created inside mast3r_slam_inference
+            import multiprocessing as mp
             from mast3r_slam.frame import SharedStates
+
+            # We'll monkey-patch SharedStates.__init__ to capture the states object
             original_shared_states_init = SharedStates.__init__
 
             def patched_shared_states_init(states_self, *args, **kwargs):
@@ -413,32 +390,29 @@ class SLAMSession:
             # Apply the patch
             SharedStates.__init__ = patched_shared_states_init
             print(f"[SLAM Session {self.session_id}] ✓ SharedStates monkey-patch installed")
-        except Exception as e:
-            print(f"[SLAM Session {self.session_id}] ✗ FAILED to monkey-patch SharedStates: {e}")
-            import traceback
-            traceback.print_exc()
-            return
+
+            try:
+                # Run SLAM inference (blocks until dataset.terminated = True)
+                print(f"[SLAM Session {self.session_id}] Calling original mast3r_slam_inference()...")
+                result = original_mast3r_slam_inference(cfg)
+                print(f"[SLAM Session {self.session_id}] SLAM inference finished")
+                return result
+            finally:
+                # Restore original SharedStates.__init__
+                SharedStates.__init__ = original_shared_states_init
 
         try:
-            # Change to rerun_mast3r directory so relative paths work (same as batch API)
-            import os
-            original_cwd = os.getcwd()
-            os.chdir("/workspace/rerun_mast3r")
-            print(f"[SLAM Session {self.session_id}] Changed working directory to: {os.getcwd()}")
-
             print(f"[SLAM Session {self.session_id}] Starting SLAM inference (will block waiting for images)...")
-            mast3r_slam_inference(inf_config)
+            patched_mast3r_slam_inference(inf_config)
             print(f"[SLAM Session {self.session_id}] ✓ SLAM inference completed successfully")
         except Exception as e:
             print(f"[SLAM Session {self.session_id}] ✗ SLAM inference error: {e}")
             import traceback
             traceback.print_exc()
         finally:
-            # Restore original working directory and functions
-            print(f"[SLAM Session {self.session_id}] Restoring original functions")
-            os.chdir(original_cwd)
+            # Restore original function
+            print(f"[SLAM Session {self.session_id}] Restoring original load_dataset function")
             inf_module.load_dataset = original_load_dataset
-            SharedStates.__init__ = original_shared_states_init
 
 
 

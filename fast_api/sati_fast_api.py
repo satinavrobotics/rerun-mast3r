@@ -54,7 +54,6 @@ class SlamInitRequest(BaseModel):
     config_path: str = "config/base.yaml"
     img_size: int = 512
     rerun_server_addr: Optional[str] = "master_slam_cli:9878"
-    enable_rerun: bool = True  # Enable/disable rerun visualization
     real_time: bool = True  # Real-time mode: process frames incrementally
 
 class SlamFrameRequest(BaseModel):
@@ -161,7 +160,6 @@ async def slam_init(request: SlamInitRequest):
             img_size=request.img_size,
             real_time=request.real_time,
             rerun_server_addr=request.rerun_server_addr,
-            enable_rerun=request.enable_rerun,
             output_dir="/workspace/rerun_mast3r/logs"
         )
 
