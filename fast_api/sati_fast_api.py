@@ -113,8 +113,8 @@ async def estimate_pose(request: EstimatePoseRequest):
     # Run inference
     result = subprocess.run(cmd, capture_output=True, text=True, cwd="/workspace/rerun_mast3r")
 
-    # Check for output file
-    out_file = Path(f"/workspace/rerun_mast3r/logs/{request.save_as}_traj_data.json")
+    # Check for output file (written to current directory by sati_master_slam.py)
+    out_file = Path(f"/workspace/rerun_mast3r/{request.save_as}_traj_data.json")
     if out_file.exists():
         trajectory = json.loads(out_file.read_text())
         return {
