@@ -1,6 +1,6 @@
 model:
   # path (relative to your working directory) to the .pth checkpoint
-  weights_path: "workspace/rerun_mast3r/checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth"
+  weights_path: "/workspace/rerun_mast3r/checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth"
   # the (height, width) your dataloader returns
   # replace these with the actual values you saw in get_img_shape()
   img_size: [224, 448]
