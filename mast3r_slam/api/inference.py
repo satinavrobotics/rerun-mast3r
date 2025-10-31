@@ -55,7 +55,11 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
     mp.set_start_method("spawn")
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.set_grad_enabled(False)
-    device = "cuda:0"
+
+    # Auto-detect device: try CUDA first, fall back to CPU if allocation fails (unlicensed GPU)
+    # Note: Small allocations might succeed but large ones fail, so we'll catch errors during SharedKeyframes creation
+    device = "cuda:0" if torch.cuda.is_available() else "cpu"
+    print(f"Initial device selection: {device}")
 
     ## rerun setup
     # If a custom rerun server address is provided, connect to it
@@ -79,8 +83,22 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
     dataset.subsample(config["dataset"]["subsample"])
 
     h, w = dataset.get_img_shape()[0]
-    keyframes = SharedKeyframes(manager, h, w)
-    states = SharedStates(manager, h, w)
+
+    # Try to create shared memory on selected device, fall back to CPU if it fails (unlicensed GPU)
+    try:
+        keyframes = SharedKeyframes(manager, h, w, device=device)
+        states = SharedStates(manager, h, w, device=device)
+        print(f"✓ Successfully created shared memory on {device}")
+    except RuntimeError as e:
+        if "NVML" in str(e) or "CUDA" in str(e):
+            print(f"✗ CUDA allocation failed (unlicensed GPU): {e}")
+            print("Falling back to CPU...")
+            device = "cpu"
+            keyframes = SharedKeyframes(manager, h, w, device=device)
+            states = SharedStates(manager, h, w, device=device)
+            print(f"✓ Successfully created shared memory on CPU")
+        else:
+            raise
 
     model = load_mast3r(device=device)
     model.share_memory()
@@ -311,7 +329,7 @@ def run_backend(config_path, model, states, keyframes, K):
 
     device = keyframes.device
     factor_graph = FactorGraph(model, keyframes, K, device)
-    retrieval_database = load_retriever(model)
+    retrieval_database = load_retriever(model, device=device)
 
     mode = states.get_mode()
     while mode is not Mode.TERMINATED:
