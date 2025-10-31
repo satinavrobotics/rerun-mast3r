@@ -322,12 +322,17 @@ class SLAMSession:
 
         # Create inference config
         try:
+            print(f"[SLAM Session {self.session_id}] Creating RerunTyroConfig...")
+            rr_config = RerunTyroConfig(
+                headless=True,
+                serve=False,
+                connect=bool(self.rerun_server_addr)
+            )
+            print(f"[SLAM Session {self.session_id}] ✓ Created RerunTyroConfig")
+
+            print(f"[SLAM Session {self.session_id}] Creating InferenceConfig...")
             inf_config = InferenceConfig(
-                rr_config=RerunTyroConfig(
-                    headless=True,
-                    serve=False,
-                    connect=bool(self.rerun_server_addr)
-                ),
+                rr_config=rr_config,
                 dataset="streaming",  # Dummy path, we use self.dataset instead
                 config=self.config_path,
                 save_as=self.session_id,
