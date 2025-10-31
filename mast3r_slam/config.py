@@ -4,7 +4,7 @@ import yaml
 config = {}
 
 
-def load_config(path="config/base.yaml", is_parent=False):
+def load_config(path="/workspace/rerun_mast3r/config/base.yaml", is_parent=False):
     # from https://stackoverflow.com/questions/30458977/yaml-loads-5e-6-as-string-and-not-a-number
     loader = yaml.SafeLoader
     loader.add_implicit_resolver(
