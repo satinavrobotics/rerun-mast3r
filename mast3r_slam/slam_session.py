@@ -14,12 +14,33 @@ Key Insight: We don't reimplement SLAM - we just feed it a streaming dataset and
 Author: CImbi
 """
 
+# Patch numpy.asarray to support 'copy' parameter for numpy < 2.0
+# This is needed for rerun-sdk 0.23.1 compatibility with numpy 1.26.4
+import numpy as np
+_orig_asarray = np.asarray
+def _patched_asarray(a, dtype=None, order=None, *, like=None, copy=None):
+    """Backport copy parameter support for numpy < 2.0"""
+    # Build kwargs, filtering out None values
+    kwargs = {}
+    if dtype is not None:
+        kwargs['dtype'] = dtype
+    if order is not None:
+        kwargs['order'] = order
+    # Note: 'like' parameter not supported in numpy 1.26.4, skip it
+
+    if copy is True:
+        # Explicit copy requested - use np.array which always copies
+        return np.array(a, copy=True, **kwargs)
+    else:
+        # Default behavior - no copy or copy=False/None
+        return _orig_asarray(a, **kwargs)
+np.asarray = _patched_asarray
+
 import json
 import time
 import math
 from pathlib import Path
 from typing import Optional, Dict, List, Tuple, Literal
-import numpy as np
 from dataclasses import dataclass
 import cv2
 import yaml
