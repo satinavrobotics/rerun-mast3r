@@ -55,7 +55,14 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
     mp.set_start_method("spawn")
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.set_grad_enabled(False)
-    device = "cuda:0"
+
+    # Auto-detect device: use CUDA if available, otherwise fall back to CPU
+    if torch.cuda.is_available():
+        device = "cuda:0"
+        print("Using CUDA device")
+    else:
+        device = "cpu"
+        print("CUDA not available, falling back to CPU")
 
     ## rerun setup
     # If a custom rerun server address is provided, connect to it
@@ -79,8 +86,8 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
     dataset.subsample(config["dataset"]["subsample"])
 
     h, w = dataset.get_img_shape()[0]
-    keyframes = SharedKeyframes(manager, h, w)
-    states = SharedStates(manager, h, w)
+    keyframes = SharedKeyframes(manager, h, w, device=device)
+    states = SharedStates(manager, h, w, device=device)
 
     model = load_mast3r(device=device)
     model.share_memory()
