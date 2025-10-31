@@ -34,6 +34,7 @@ class StreamingDataset:
     Compatible with the existing SLAM pipeline.
     """
     def __init__(self, img_size: Literal[224, 512] = 512):
+        print(f"[StreamingDataset] Initializing with img_size={img_size}")
         self.img_size = img_size
         self.images = []  # List of numpy arrays (H, W, 3) in BGR format
         self.timestamps = []
@@ -43,17 +44,38 @@ class StreamingDataset:
 
         # Load camera intrinsics from config/intrinsics.yaml
         cfg_path = Path(__file__).parents[1] / "config" / "intrinsics.yaml"
-        with open(cfg_path, "r") as f:
-            data = yaml.safe_load(f)
+        print(f"[StreamingDataset] Loading intrinsics from: {cfg_path}")
+
+        try:
+            with open(cfg_path, "r") as f:
+                data = yaml.safe_load(f)
+            print(f"[StreamingDataset] ✓ Loaded intrinsics YAML")
+        except Exception as e:
+            print(f"[StreamingDataset] ✗ FAILED to load intrinsics YAML: {e}")
+            raise
 
         W, H = data["width"], data["height"]
         calib = data["calibration"]  # [fx, fy, cx, cy, k1, k2, p1, p2]
+        print(f"[StreamingDataset] Camera: {W}x{H}, calib={calib}")
 
         # Import Intrinsics class
-        from mast3r_slam.dataloader import Intrinsics
-        self.camera_intrinsics = Intrinsics.from_calib(
-            img_size, W, H, calib, always_undistort=True
-        )
+        try:
+            from mast3r_slam.dataloader import Intrinsics
+            print(f"[StreamingDataset] ✓ Imported Intrinsics")
+        except Exception as e:
+            print(f"[StreamingDataset] ✗ FAILED to import Intrinsics: {e}")
+            raise
+
+        try:
+            self.camera_intrinsics = Intrinsics.from_calib(
+                img_size, W, H, calib, always_undistort=True
+            )
+            print(f"[StreamingDataset] ✓ Created camera intrinsics")
+        except Exception as e:
+            print(f"[StreamingDataset] ✗ FAILED to create intrinsics: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
 
     def add_image(self, img: np.ndarray, timestamp: float):
         """Add a new image to the dataset (called by API when frame arrives)"""
@@ -159,12 +181,21 @@ class SLAMSession:
             raise ValueError("slam_session.py only supports real_time=True. For batch processing, use sati_master_slam.py directly.")
 
         # Streaming dataset
-        self.dataset = StreamingDataset(img_size=img_size)
+        print(f"[SLAM Session {session_id}] Creating StreamingDataset...")
+        try:
+            self.dataset = StreamingDataset(img_size=img_size)
+            print(f"[SLAM Session {session_id}] ✓ StreamingDataset created")
+        except Exception as e:
+            print(f"[SLAM Session {session_id}] ✗ FAILED to create StreamingDataset: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
 
-        print(f"[SLAM Session {session_id}] Created")
+        print(f"[SLAM Session {session_id}] ✓ Created successfully")
         print(f"  Mode: Real-time streaming")
         print(f"  Config: {config_path}")
         print(f"  Image size: {img_size}")
+        print(f"  Rerun server: {rerun_server_addr}")
         print(f"  Output: {self.pose_file_path}")
     
     def initialize_real_time_mode(self):
@@ -174,16 +205,32 @@ class SLAMSession:
         """
         print(f"[SLAM Session {self.session_id}] Initializing real-time mode")
 
+        # Ensure output directory exists
+        self.pose_file_path.parent.mkdir(parents=True, exist_ok=True)
+        print(f"[SLAM Session {self.session_id}] Output directory: {self.pose_file_path.parent}")
+
         # Open pose output file
-        self.pose_file = open(self.pose_file_path, 'w')
+        try:
+            self.pose_file = open(self.pose_file_path, 'w')
+            print(f"[SLAM Session {self.session_id}] Opened pose file: {self.pose_file_path}")
+        except Exception as e:
+            print(f"[SLAM Session {self.session_id}] ERROR: Failed to open pose file: {e}")
+            raise
 
         # Start SLAM inference in a background thread
         import threading
         self.slam_thread = threading.Thread(target=self._run_slam_inference, daemon=True)
         self.slam_thread.start()
+        print(f"[SLAM Session {self.session_id}] SLAM thread started (daemon={self.slam_thread.daemon})")
+
+        # Give thread a moment to start and check for immediate crashes
+        time.sleep(0.5)
+        if not self.slam_thread.is_alive():
+            print(f"[SLAM Session {self.session_id}] WARNING: SLAM thread died immediately after start!")
+            raise RuntimeError("SLAM thread failed to start - check logs for import errors")
 
         self.is_initialized = True
-        print(f"[SLAM Session {self.session_id}] Real-time mode initialized, SLAM thread started")
+        print(f"[SLAM Session {self.session_id}] Real-time mode initialized successfully")
     
     def _extract_pose_from_frame(self, frame) -> PoseEstimate:
         """
@@ -222,60 +269,99 @@ class SLAMSession:
         Run SLAM inference in background thread.
         This is the continuous SLAM process that processes frames as they arrive.
         """
-        from mast3r_slam.api.inference import InferenceConfig, mast3r_slam_inference
-        from simplecv.rerun_log_utils import RerunTyroConfig
+        print(f"[SLAM Session {self.session_id}] SLAM thread started, attempting imports...")
 
-        print(f"[SLAM Session {self.session_id}] Starting SLAM inference thread...")
+        try:
+            from mast3r_slam.api.inference import InferenceConfig, mast3r_slam_inference
+            print(f"[SLAM Session {self.session_id}] ✓ Imported InferenceConfig, mast3r_slam_inference")
+        except Exception as e:
+            print(f"[SLAM Session {self.session_id}] ✗ FAILED to import InferenceConfig: {e}")
+            import traceback
+            traceback.print_exc()
+            return
+
+        try:
+            from simplecv.rerun_log_utils import RerunTyroConfig
+            print(f"[SLAM Session {self.session_id}] ✓ Imported RerunTyroConfig")
+        except Exception as e:
+            print(f"[SLAM Session {self.session_id}] ✗ FAILED to import RerunTyroConfig: {e}")
+            import traceback
+            traceback.print_exc()
+            return
+
+        print(f"[SLAM Session {self.session_id}] Creating inference config...")
+        print(f"  - rerun_server_addr: {self.rerun_server_addr}")
+        print(f"  - config_path: {self.config_path}")
+        print(f"  - img_size: {self.img_size}")
 
         # Create inference config
-        inf_config = InferenceConfig(
-            rr_config=RerunTyroConfig(
-                headless=True,
-                serve=False,
-                connect=bool(self.rerun_server_addr)
-            ),
-            dataset="streaming",  # Dummy path, we use self.dataset instead
-            config=self.config_path,
-            save_as=self.session_id,
-            img_size=self.img_size,
-            all_frames=True,  # Save all frame poses
-            rerun_server_addr=self.rerun_server_addr,
-            real_time=True
-        )
+        try:
+            inf_config = InferenceConfig(
+                rr_config=RerunTyroConfig(
+                    headless=True,
+                    serve=False,
+                    connect=bool(self.rerun_server_addr)
+                ),
+                dataset="streaming",  # Dummy path, we use self.dataset instead
+                config=self.config_path,
+                save_as=self.session_id,
+                img_size=self.img_size,
+                all_frames=True,  # Save all frame poses
+                rerun_server_addr=self.rerun_server_addr,
+                real_time=True
+            )
+            print(f"[SLAM Session {self.session_id}] ✓ Created InferenceConfig")
+        except Exception as e:
+            print(f"[SLAM Session {self.session_id}] ✗ FAILED to create InferenceConfig: {e}")
+            import traceback
+            traceback.print_exc()
+            return
 
         # Monkey-patch the dataset loading to use our streaming dataset
-        import mast3r_slam.api.inference as inf_module
-        original_load_dataset = inf_module.load_dataset
+        print(f"[SLAM Session {self.session_id}] Setting up dataset monkey-patch...")
+        try:
+            import mast3r_slam.api.inference as inf_module
+            original_load_dataset = inf_module.load_dataset
 
-        def patched_load_dataset(dataset_path, img_size):
-            print(f"[SLAM Session {self.session_id}] Using streaming dataset instead of {dataset_path}")
-            return self.dataset
+            def patched_load_dataset(dataset_path, img_size):
+                print(f"[SLAM Session {self.session_id}] Using streaming dataset instead of {dataset_path}")
+                return self.dataset
 
-        inf_module.load_dataset = patched_load_dataset
+            inf_module.load_dataset = patched_load_dataset
+            print(f"[SLAM Session {self.session_id}] ✓ Dataset monkey-patch installed")
+        except Exception as e:
+            print(f"[SLAM Session {self.session_id}] ✗ FAILED to monkey-patch dataset: {e}")
+            import traceback
+            traceback.print_exc()
+            return
 
         # Monkey-patch the inference loop to extract poses in real-time
         original_mast3r_slam_inference = mast3r_slam_inference
 
         def patched_mast3r_slam_inference(cfg):
+            print(f"[SLAM Session {self.session_id}] Running patched SLAM inference...")
             # We need to hook into the SLAM loop to extract poses
             # For now, just call the original and read poses from file at the end
             result = original_mast3r_slam_inference(cfg)
 
             # After SLAM completes, read the trajectory file and populate poses
+            print(f"[SLAM Session {self.session_id}] SLAM inference finished, loading poses from trajectory...")
             self._load_poses_from_trajectory()
 
             return result
 
         try:
+            print(f"[SLAM Session {self.session_id}] Starting SLAM inference (will block waiting for images)...")
             # Run SLAM inference (blocks until dataset.terminated = True)
             patched_mast3r_slam_inference(inf_config)
-            print(f"[SLAM Session {self.session_id}] SLAM inference completed")
+            print(f"[SLAM Session {self.session_id}] ✓ SLAM inference completed successfully")
         except Exception as e:
-            print(f"[SLAM Session {self.session_id}] SLAM inference error: {e}")
+            print(f"[SLAM Session {self.session_id}] ✗ SLAM inference error: {e}")
             import traceback
             traceback.print_exc()
         finally:
             # Restore original function
+            print(f"[SLAM Session {self.session_id}] Restoring original load_dataset function")
             inf_module.load_dataset = original_load_dataset
 
     def _load_poses_from_trajectory(self):
