@@ -14,9 +14,7 @@ from typing import Optional, Dict, List, Tuple
 import numpy as np
 from dataclasses import dataclass
 
-from mast3r_slam.api.inference import run_inference, InferenceConfig
-from mast3r_slam.dataloader import SatiDataset
-from simplecv.rerun_log_utils import RerunTyroConfig
+# Heavy imports are done lazily inside methods to avoid slow startup
 
 
 @dataclass
@@ -81,19 +79,22 @@ class SLAMSession:
     def initialize_batch_mode(self, dataset_path: str):
         """
         Initialize for batch processing of a dataset folder.
-        
+
         Args:
             dataset_path: Path to folder containing images (00000.png, 00001.png, ...)
         """
         print(f"[SLAM Session {self.session_id}] Initializing batch mode with dataset: {dataset_path}")
-        
+
+        # Lazy import
+        from mast3r_slam.dataloader import SatiDataset
+
         # Load dataset
         self.dataset = SatiDataset(dataset_path, self.img_size)
         self.frame_iterator = iter(self.dataset)
-        
+
         # Open pose output file
         self.pose_file = open(self.pose_file_path, 'w')
-        
+
         self.is_initialized = True
         print(f"[SLAM Session {self.session_id}] Batch mode initialized. Dataset has {len(self.dataset)} frames")
     
