@@ -129,13 +129,17 @@ class StreamingDataset:
     def get_img_shape(self):
         """Get image shape"""
         from mast3r_slam.dataloader import resize_img
+        print(f"[StreamingDataset] get_img_shape() called, waiting for first image...")
         # Wait for first image
         while len(self.images) == 0:
             time.sleep(0.01)
+        print(f"[StreamingDataset] ✓ First image available, computing shape...")
         img = self.images[0]
         raw_img_shape = img.shape
         img = resize_img(img, self.img_size)
-        return img["img"][0].shape[1:], raw_img_shape[:2]
+        shape_result = img["img"][0].shape[1:], raw_img_shape[:2]
+        print(f"[StreamingDataset] ✓ Image shape: {shape_result}")
+        return shape_result
 
     def subsample(self, subsample):
         """Subsample dataset (no-op for streaming)"""
@@ -362,6 +366,7 @@ class SLAMSession:
 
         def patched_mast3r_slam_inference(cfg):
             print(f"[SLAM Session {self.session_id}] Running patched SLAM inference...")
+            print(f"[SLAM Session {self.session_id}] About to call mast3r_slam_inference()...")
 
             # Import here to access the states object created inside mast3r_slam_inference
             import multiprocessing as mp
@@ -379,9 +384,11 @@ class SLAMSession:
 
             # Apply the patch
             SharedStates.__init__ = patched_shared_states_init
+            print(f"[SLAM Session {self.session_id}] ✓ SharedStates monkey-patch installed")
 
             try:
                 # Run SLAM inference (blocks until dataset.terminated = True)
+                print(f"[SLAM Session {self.session_id}] Calling original mast3r_slam_inference()...")
                 result = original_mast3r_slam_inference(cfg)
                 print(f"[SLAM Session {self.session_id}] SLAM inference finished")
                 return result
