@@ -167,13 +167,15 @@ class SLAMSession:
         img_size: int = 512,
         real_time: bool = False,
         rerun_server_addr: Optional[str] = None,
+        enable_rerun: bool = True,  # New parameter to control rerun visualization
         output_dir: str = "logs"
     ):
         self.session_id = session_id
         self.config_path = config_path
         self.img_size = img_size
         self.real_time = real_time
-        self.rerun_server_addr = rerun_server_addr
+        self.rerun_server_addr = rerun_server_addr if enable_rerun else None
+        self.enable_rerun = enable_rerun
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -221,7 +223,9 @@ class SLAMSession:
         print(f"  Mode: Real-time streaming")
         print(f"  Config: {config_path}")
         print(f"  Image size: {img_size}")
-        print(f"  Rerun server: {rerun_server_addr}")
+        print(f"  Rerun: {'Enabled' if self.enable_rerun else 'Disabled'}")
+        if self.enable_rerun:
+            print(f"  Rerun server: {self.rerun_server_addr}")
         print(f"  Output: {self.pose_file_path}")
     
     def initialize_real_time_mode(self):
@@ -306,39 +310,30 @@ class SLAMSession:
             traceback.print_exc()
             return
 
-        try:
-            from simplecv.rerun_log_utils import RerunTyroConfig
-            print(f"[SLAM Session {self.session_id}] ✓ Imported RerunTyroConfig")
-        except Exception as e:
-            print(f"[SLAM Session {self.session_id}] ✗ FAILED to import RerunTyroConfig: {e}")
-            import traceback
-            traceback.print_exc()
-            return
-
+        # Create a simple dummy config object (avoid RerunTyroConfig which uses tyro.cli)
         print(f"[SLAM Session {self.session_id}] Creating inference config...")
         print(f"  - rerun_server_addr: {self.rerun_server_addr}")
         print(f"  - config_path: {self.config_path}")
         print(f"  - img_size: {self.img_size}")
 
-        # Create inference config
+        # Create inference config with a simple dummy rr_config
         try:
-            print(f"[SLAM Session {self.session_id}] Creating RerunTyroConfig...")
-            rr_config = RerunTyroConfig(
-                headless=True,
-                serve=False,
-                connect=bool(self.rerun_server_addr)
-            )
-            print(f"[SLAM Session {self.session_id}] ✓ Created RerunTyroConfig")
+            # Create a simple object that has the attributes InferenceConfig expects
+            class DummyRRConfig:
+                def __init__(self):
+                    self.headless = True
+                    self.serve = False  # This is checked at line 249 in inference.py
+                    self.connect = bool(self.rerun_server_addr)
 
-            print(f"[SLAM Session {self.session_id}] Creating InferenceConfig...")
+            print(f"[SLAM Session {self.session_id}] Creating InferenceConfig with dummy rr_config...")
             inf_config = InferenceConfig(
-                rr_config=rr_config,
+                rr_config=DummyRRConfig(),
                 dataset="streaming",  # Dummy path, we use self.dataset instead
                 config=self.config_path,
                 save_as=self.session_id,
                 img_size=self.img_size,
                 all_frames=True,  # Save all frame poses
-                rerun_server_addr=self.rerun_server_addr,
+                rerun_server_addr=self.rerun_server_addr,  # This is what actually matters for rerun connection
                 real_time=True
             )
             print(f"[SLAM Session {self.session_id}] ✓ Created InferenceConfig")
