@@ -7,7 +7,6 @@ from mast3r_slam.frame import Frame, SharedKeyframes, SharedStates
 from mast3r_slam.mast3r_utils import estimate_focal_knowing_depth
 import lietorch
 from mast3r_slam.lietorch_utils import as_SE3
-from simplecv.ops import conventions
 import rerun.blueprint as rrb
 
 
@@ -75,9 +74,8 @@ class RerunLogger:
             0
         ]  # Extract the first batch element
 
-        mat4x4 = conventions.convert_pose(
-            mat4x4, src_convention=conventions.CC.CV, dst_convention=conventions.CC.GL
-        )
+        # MASt3R-SLAM outputs poses in OpenCV (RDF) convention - don't convert!
+        # Keep it in CV/RDF format (Right-Down-Forward) to match robot camera orientation
 
         # Extract rotation (3x3) and translation (1x3) from the 4x4 transformation matrix
         rotation_matrix: Float32[np.ndarray, "3 3"] = mat4x4[
@@ -99,7 +97,7 @@ class RerunLogger:
                 principal_point=pp.numpy(),
                 height=H,
                 width=W,
-                camera_xyz=rr.ViewCoordinates.RUB,
+                camera_xyz=rr.ViewCoordinates.RDF,  # OpenCV convention: Right-Down-Forward
                 image_plane_distance=self.image_plane_distance * 2,
             ),
         )
