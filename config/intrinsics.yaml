@@ -1,17 +1,16 @@
 # config/intrinsics.yaml
 
-width: 320
-height: 240
+width: 640
+height: 480
 
-# calibration expects [fx, fy, cx, cy, k1, k2, p1, p2]
-calibration:
-  [
-    476.71,        # fx  (from K[0,0])
-    479.505,       # fy  (from K[1,1])
-    350.738,       # cx  (from K[0,2])
-    209.532,       # cy  (from K[1,2])
-    -0.336591,     # k1
-     0.159742,     # k2
-     0.00012697,   # p1
-    -0.0000722557  # p2
-  ]
+# Calibration expects [fx, fy, cx, cy, k1, k2, p1, p2]
+calibration: [
+  320.2549,     # fx  (from K[0,0])
+  320.2549,     # fy  (from K[1,1])
+  320.0,        # cx  (from K[0,2])
+  240.0,        # cy  (from K[1,2])
+  -0.05,        # k1  (from d[0])
+   0.01,        # k2  (from d[1])
+  -0.005,       # p1  (from d[2])
+   0.001        # p2  (from d[3])
+]

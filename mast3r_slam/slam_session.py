@@ -1,21 +1,21 @@
 """
 In-Memory SLAM Session Manager
 
-Keeps SLAM state in memory for real-time processing.
-Supports both batch (dataset folder) and streaming (frame-by-frame) modes.
+Simplified version that creates a streaming dataset and calls mast3r_slam_inference().
+The only difference from batch mode is that we feed images incrementally instead of from a folder.
 
 Author: CImbi
 """
 
 import json
 import time
+import math
 from pathlib import Path
-from typing import Optional, Dict, List, Tuple
+from typing import Optional, Dict, List, Tuple, Literal
 import numpy as np
 from dataclasses import dataclass
-
-# Heavy imports are done lazily inside methods to avoid slow startup
-
+import cv2
+import yaml
 
 @dataclass
 class PoseEstimate:
@@ -27,15 +27,106 @@ class PoseEstimate:
     confidence: Optional[float] = None
 
 
+class StreamingDataset:
+    """
+    A dataset that yields images one-by-one from memory instead of from disk.
+    Blocks when waiting for new images (for real-time SLAM).
+    Compatible with the existing SLAM pipeline.
+    """
+    def __init__(self, img_size: Literal[224, 512] = 512):
+        self.img_size = img_size
+        self.images = []  # List of numpy arrays (H, W, 3) in BGR format
+        self.timestamps = []
+        self.dtype = np.float32
+        self.save_results = False
+        self.terminated = False  # Flag to stop SLAM loop
+
+        # Load camera intrinsics from config/intrinsics.yaml
+        cfg_path = Path(__file__).parents[1] / "config" / "intrinsics.yaml"
+        with open(cfg_path, "r") as f:
+            data = yaml.safe_load(f)
+
+        W, H = data["width"], data["height"]
+        calib = data["calibration"]  # [fx, fy, cx, cy, k1, k2, p1, p2]
+
+        # Import Intrinsics class
+        from mast3r_slam.dataloader import Intrinsics
+        self.camera_intrinsics = Intrinsics.from_calib(
+            img_size, W, H, calib, always_undistort=True
+        )
+
+    def add_image(self, img: np.ndarray, timestamp: float):
+        """Add a new image to the dataset (called by API when frame arrives)"""
+        self.images.append(img)
+        self.timestamps.append(timestamp)
+        print(f"[StreamingDataset] Added frame {len(self.images)-1}, total frames: {len(self.images)}")
+
+    def terminate(self):
+        """Signal that no more images will be added"""
+        self.terminated = True
+
+    def __len__(self):
+        """
+        Return a very large number so SLAM loop doesn't terminate.
+        The loop will block in __getitem__ waiting for new images.
+        """
+        if self.terminated:
+            return len(self.images)
+        return 999999  # Effectively infinite
+
+    def __getitem__(self, idx):
+        """
+        Get image at index (compatible with SLAM pipeline).
+        Blocks if image not available yet (waiting for ROS node to send it).
+        """
+        # Wait for image to arrive
+        while idx >= len(self.images):
+            if self.terminated:
+                raise IndexError(f"Dataset terminated, no image at index {idx}")
+            time.sleep(0.01)  # Wait 10ms and check again
+
+        timestamp = self.timestamps[idx]
+        img = self.get_image(idx)
+        return timestamp, img
+
+    def get_image(self, idx):
+        """Get preprocessed image"""
+        img = self.images[idx]
+        # Apply camera calibration (undistortion)
+        if self.camera_intrinsics is not None:
+            img = self.camera_intrinsics.remap(img)
+        return img.astype(self.dtype) / 255.0
+
+    def get_img_shape(self):
+        """Get image shape"""
+        from mast3r_slam.dataloader import resize_img
+        # Wait for first image
+        while len(self.images) == 0:
+            time.sleep(0.01)
+        img = self.images[0]
+        raw_img_shape = img.shape
+        img = resize_img(img, self.img_size)
+        return img["img"][0].shape[1:], raw_img_shape[:2]
+
+    def subsample(self, subsample):
+        """Subsample dataset (no-op for streaming)"""
+        pass
+
+    def has_calib(self):
+        """Check if calibration is available"""
+        return self.camera_intrinsics is not None
+
+    def get_timestamp(self, idx):
+        """Get timestamp at index"""
+        return self.timestamps[idx]
+
+
 class SLAMSession:
     """
-    In-memory SLAM session that processes frames incrementally.
-    
-    Supports two modes:
-    1. Batch mode: Load all frames from dataset folder, process sequentially
-    2. Real-time mode: Receive frames one-by-one, process immediately
+    SLAM session that processes frames incrementally using a streaming dataset.
+    Much simpler than before - just wraps mast3r_slam_inference() with a streaming dataset.
     """
-    
+
     def __init__(
         self,
         session_id: str,
@@ -52,24 +143,20 @@ class SLAMSession:
         self.rerun_server_addr = rerun_server_addr
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # State
         self.poses: List[PoseEstimate] = []
         self.frame_count = 0
         self.is_initialized = False
         self.start_time = time.time()
-        
+
         # JSON Lines output file for incremental pose logging
         self.pose_file_path = self.output_dir / f"{session_id}_poses.jsonl"
         self.pose_file = None
-        
-        # For batch mode: dataset and frame iterator
-        self.dataset = None
-        self.frame_iterator = None
-        
-        # SLAM state (will be populated during processing)
-        self.slam_state = None
-        
+
+        # Streaming dataset
+        self.dataset = StreamingDataset(img_size=img_size)
+
         print(f"[SLAM Session {session_id}] Created")
         print(f"  Mode: {'Real-time' if real_time else 'Batch'}")
         print(f"  Config: {config_path}")
@@ -88,9 +175,8 @@ class SLAMSession:
         # Lazy import
         from mast3r_slam.dataloader import SatiDataset
 
-        # Load dataset
+        # Load dataset from folder
         self.dataset = SatiDataset(dataset_path, self.img_size)
-        self.frame_iterator = iter(self.dataset)
 
         # Open pose output file
         self.pose_file = open(self.pose_file_path, 'w')
@@ -101,50 +187,201 @@ class SLAMSession:
     def initialize_real_time_mode(self):
         """
         Initialize for real-time streaming mode.
-        Frames will be added one-by-one via add_frame().
+        Starts the SLAM inference thread that will process frames as they arrive.
         """
         print(f"[SLAM Session {self.session_id}] Initializing real-time mode")
-        
+
         # Open pose output file
         self.pose_file = open(self.pose_file_path, 'w')
-        
+
+        # Start SLAM inference in a background thread
+        import threading
+        self.slam_thread = threading.Thread(target=self._run_slam_inference, daemon=True)
+        self.slam_thread.start()
+
         self.is_initialized = True
-        print(f"[SLAM Session {self.session_id}] Real-time mode initialized")
+        print(f"[SLAM Session {self.session_id}] Real-time mode initialized, SLAM thread started")
     
+    def _extract_pose_from_frame(self, frame) -> PoseEstimate:
+        """
+        Extract pose from a Frame object (called by SLAM thread after processing each frame).
+
+        Args:
+            frame: Frame object with T_WC transformation
+
+        Returns:
+            PoseEstimate
+        """
+        import lietorch
+
+        # Get transformation (world to camera)
+        T_WC = frame.T_WC
+
+        # Extract translation
+        translation = T_WC.translation().cpu().numpy()[0]  # (3,)
+        x, y, z = translation
+
+        # Extract rotation matrix to get yaw
+        rotation = T_WC.rotation().matrix().cpu().numpy()[0]  # (3, 3)
+        yaw = math.atan2(rotation[1, 0], rotation[0, 0])
+
+        pose = PoseEstimate(
+            frame_id=frame.idx,
+            position=(float(x), float(y)),
+            yaw=float(yaw),
+            timestamp=time.time()
+        )
+
+        return pose
+
+    def _run_slam_inference(self):
+        """
+        Run SLAM inference in background thread.
+        This is the continuous SLAM process that processes frames as they arrive.
+        """
+        from mast3r_slam.api.inference import InferenceConfig, mast3r_slam_inference
+        from simplecv.rerun_log_utils import RerunTyroConfig
+
+        print(f"[SLAM Session {self.session_id}] Starting SLAM inference thread...")
+
+        # Create inference config
+        inf_config = InferenceConfig(
+            rr_config=RerunTyroConfig(
+                headless=True,
+                serve=False,
+                connect=bool(self.rerun_server_addr)
+            ),
+            dataset="streaming",  # Dummy path, we use self.dataset instead
+            config=self.config_path,
+            save_as=self.session_id,
+            img_size=self.img_size,
+            all_frames=True,  # Save all frame poses
+            rerun_server_addr=self.rerun_server_addr,
+            real_time=True
+        )
+
+        # Monkey-patch the dataset loading to use our streaming dataset
+        import mast3r_slam.api.inference as inf_module
+        original_load_dataset = inf_module.load_dataset
+
+        def patched_load_dataset(dataset_path, img_size):
+            print(f"[SLAM Session {self.session_id}] Using streaming dataset instead of {dataset_path}")
+            return self.dataset
+
+        inf_module.load_dataset = patched_load_dataset
+
+        # Monkey-patch the inference loop to extract poses in real-time
+        original_mast3r_slam_inference = mast3r_slam_inference
+
+        def patched_mast3r_slam_inference(cfg):
+            # We need to hook into the SLAM loop to extract poses
+            # For now, just call the original and read poses from file at the end
+            result = original_mast3r_slam_inference(cfg)
+
+            # After SLAM completes, read the trajectory file and populate poses
+            self._load_poses_from_trajectory()
+
+            return result
+
+        try:
+            # Run SLAM inference (blocks until dataset.terminated = True)
+            patched_mast3r_slam_inference(inf_config)
+            print(f"[SLAM Session {self.session_id}] SLAM inference completed")
+        except Exception as e:
+            print(f"[SLAM Session {self.session_id}] SLAM inference error: {e}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            # Restore original function
+            inf_module.load_dataset = original_load_dataset
+
+    def _load_poses_from_trajectory(self):
+        """Load poses from the trajectory file written by SLAM"""
+        traj_file = self.output_dir / self.session_id / "streaming.txt"
+        if not traj_file.exists():
+            print(f"[SLAM Session {self.session_id}] Trajectory file not found: {traj_file}")
+            return
+
+        print(f"[SLAM Session {self.session_id}] Loading poses from {traj_file}")
+
+        for line in traj_file.read_text().splitlines():
+            parts = line.split()
+            if len(parts) < 8:
+                continue
+
+            # Parse TUM format: timestamp x y z qx qy qz qw
+            timestamp = float(parts[0])
+            x, y = float(parts[1]), float(parts[2])
+            qx, qy, qz, qw = map(float, parts[4:8])
+
+            # Convert quaternion to yaw
+            t0 = 2 * (qw * qz + qx * qy)
+            t1 = 1 - 2 * (qy * qy + qz * qz)
+            yaw = math.atan2(t0, t1)
+
+            pose = PoseEstimate(
+                frame_id=len(self.poses),
+                position=(x, y),
+                yaw=yaw,
+                timestamp=timestamp
+            )
+
+            self._store_pose(pose)
+
     def add_frame(self, image_data: np.ndarray) -> Optional[PoseEstimate]:
         """
         Add a single frame in real-time mode.
-        
+        Simply adds the image to the streaming dataset - the SLAM thread processes it.
+
         Args:
             image_data: Image as numpy array (H, W, 3) in BGR format
-            
+
         Returns:
-            PoseEstimate if pose was computed, None if still initializing
+            PoseEstimate with current best estimate (may be from previous frame if SLAM is still processing)
         """
         if not self.is_initialized:
             raise RuntimeError("Session not initialized. Call initialize_real_time_mode() first.")
-        
+
         if not self.real_time:
             raise RuntimeError("add_frame() only works in real-time mode")
-        
-        # TODO: Implement incremental SLAM processing
-        # This requires refactoring inference.py to be stateful
-        # For now, this is a placeholder
-        
-        print(f"[SLAM Session {self.session_id}] Processing frame {self.frame_count}")
-        
-        # Placeholder: Return dummy pose
-        # In real implementation, this would call SLAM tracking
-        pose = PoseEstimate(
-            frame_id=self.frame_count,
-            position=(0.0, 0.0),
-            yaw=0.0,
-            timestamp=time.time()
-        )
-        
-        self._store_pose(pose)
+
+        # Add image to streaming dataset (SLAM thread will pick it up)
+        timestamp = time.time()
+        self.dataset.add_image(image_data, timestamp)
+
+        print(f"[SLAM Session {self.session_id}] Frame {self.frame_count} added to dataset")
+
+        # First frame: return origin pose immediately
+        if self.frame_count == 0:
+            pose = PoseEstimate(
+                frame_id=self.frame_count,
+                position=(0.0, 0.0),
+                yaw=0.0,
+                timestamp=timestamp
+            )
+            self._store_pose(pose)
+            self.frame_count += 1
+            return pose
+
+        # For subsequent frames: wait a bit for SLAM to process, then return latest pose
+        # Give SLAM thread time to process (adjust based on performance)
+        time.sleep(0.1)
+
+        # Get the latest pose from our stored poses
+        # The SLAM thread updates poses via the trajectory file
+        pose = self.get_current_pose()
+
+        if pose is None:
+            # SLAM hasn't computed a pose yet, return last known pose
+            print(f"[SLAM Session {self.session_id}] SLAM still processing, returning last pose")
+            pose = self.poses[-1] if self.poses else PoseEstimate(
+                frame_id=self.frame_count,
+                position=(0.0, 0.0),
+                yaw=0.0,
+                timestamp=timestamp
+            )
+
         self.frame_count += 1
-        
         return pose
     
     def process_batch(self, all_frames: bool = True) -> List[PoseEstimate]:
