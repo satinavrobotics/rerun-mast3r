@@ -146,26 +146,45 @@ class StreamingDataset:
         return timestamp, img
 
     def get_image(self, idx):
-        """Get preprocessed image"""
+        """Get preprocessed image (matches MonocularDataset.get_image() behavior)"""
         img = self.images[idx]
+        print(f"[StreamingDataset.get_image({idx})] Input: shape={img.shape}, dtype={img.dtype}, range=[{img.min()}, {img.max()}]")
+
+        # Convert BGR to RGB (images come from cv2.imdecode which returns BGR)
+        # This matches MonocularDataset.read_img() which does cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        print(f"[StreamingDataset.get_image({idx})] After BGR→RGB: shape={img.shape}, dtype={img.dtype}")
+
         # Apply camera calibration (undistortion)
         if self.camera_intrinsics is not None:
             img = self.camera_intrinsics.remap(img)
-        return img.astype(self.dtype) / 255.0
+            print(f"[StreamingDataset.get_image({idx})] After undistort: shape={img.shape}, dtype={img.dtype}")
+
+        result = img.astype(self.dtype) / 255.0
+        print(f"[StreamingDataset.get_image({idx})] Output: shape={result.shape}, dtype={result.dtype}, range=[{result.min():.3f}, {result.max():.3f}]")
+        return result
 
     def get_img_shape(self):
-        """Get image shape"""
+        """Get image shape - only used to determine dimensions, not for actual processing"""
         from mast3r_slam.dataloader import resize_img
         print(f"[StreamingDataset] get_img_shape() called, waiting for first image...")
         # Wait for first image
         while len(self.images) == 0:
             time.sleep(0.01)
         print(f"[StreamingDataset] ✓ First image available, computing shape...")
-        img = self.images[0]
-        raw_img_shape = img.shape
-        img = resize_img(img, self.img_size)
-        shape_result = img["img"][0].shape[1:], raw_img_shape[:2]
+
+        # Get raw image shape (BGR uint8)
+        raw_img_shape = self.images[0].shape
+
+        # For resize_img(), we need to pass a properly preprocessed image
+        # Use get_image() which does BGR→RGB, undistort, normalize to [0,1]
+        img_preprocessed = self.get_image(0)
+        img_resized = resize_img(img_preprocessed, self.img_size)
+        shape_result = img_resized["img"][0].shape[1:], raw_img_shape[:2]
+
         print(f"[StreamingDataset] ✓ Image shape: {shape_result}")
+        print(f"[StreamingDataset]   Raw shape: {raw_img_shape}")
+        print(f"[StreamingDataset]   Preprocessed dtype: {img_preprocessed.dtype}, range: [{img_preprocessed.min():.3f}, {img_preprocessed.max():.3f}]")
         return shape_result
 
     def subsample(self, subsample):
