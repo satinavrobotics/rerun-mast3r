@@ -70,8 +70,11 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
         print(f"[SLAM Inference] Initialized rerun recording: {inf_config.save_as}")
 
         # Connect to rerun server
+        # CRITICAL: Use flush_timeout_sec=0.1 to ensure data is sent immediately
+        # flush_timeout_sec=None causes data to be buffered indefinitely and dropped in daemon threads!
         print(f"[SLAM Inference] Connecting to rerun server at {inf_config.rerun_server_addr}")
-        rr.connect_grpc(f"rerun+http://{inf_config.rerun_server_addr}/proxy", flush_timeout_sec=None)
+        rr.connect_grpc(f"rerun+http://{inf_config.rerun_server_addr}/proxy", flush_timeout_sec=0.1)
+        print(f"[SLAM Inference] ✓ Connected with flush_timeout_sec=0.1 (auto-flush enabled)")
 
     parent_log_path = Path("/world")
     rr_logger = RerunLogger(parent_log_path)
