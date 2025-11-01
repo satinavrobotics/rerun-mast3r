@@ -113,7 +113,11 @@ def create_frame(i, img, T_WC: lietorch.Sim3, img_size: int = 512, device="cuda:
     rgb = img["img"].to(device=device)
     img_shape = torch.tensor(img["true_shape"], device=device)
     img_true_shape = img_shape.clone()
-    uimg = torch.from_numpy(img["unnormalized_img"]) / 255.0
+
+    # Make a writable copy of unnormalized_img to avoid PyTorch warning
+    unnormalized_img_copy = np.array(img["unnormalized_img"], copy=True)
+    uimg = torch.from_numpy(unnormalized_img_copy) / 255.0
+
     downsample = config["dataset"]["img_downsample"]
     if downsample > 1:
         uimg = uimg[::downsample, ::downsample]

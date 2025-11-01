@@ -67,6 +67,9 @@ class RerunLogger:
         rgb_img: Float32[torch.Tensor, "H W 3"] = current_frame.uimg
         rgb_img: UInt8[np.ndarray, "H W 3"] = (rgb_img * 255).numpy().astype(np.uint8)
 
+        # Debug: Check image data before logging
+        print(f"[RerunLogger] Logging frame {current_frame.frame_id}: img shape={rgb_img.shape}, dtype={rgb_img.dtype}, range=[{rgb_img.min()}, {rgb_img.max()}]")
+
         se3_pose: lietorch.SE3 = as_SE3(current_frame.T_WC.cpu())
         matb4x4: Float32[np.ndarray, "1 4 4"] = (
             se3_pose.matrix().numpy().astype(dtype=np.float32)
@@ -103,12 +106,16 @@ class RerunLogger:
                 image_plane_distance=self.image_plane_distance * 2,
             ),
         )
-        rr.log(
-            f"{cam_log_path}/pinhole/image",
-            rr.Image(image=rgb_img, color_model=rr.ColorModel.RGB).compress(
-                jpeg_quality=75
-            ),
-        )
+        try:
+            rr.log(
+                f"{cam_log_path}/pinhole/image",
+                rr.Image(image=rgb_img, color_model=rr.ColorModel.RGB).compress(
+                    jpeg_quality=75
+                ),
+            )
+            print(f"[RerunLogger] ✓ Logged image to rerun: {cam_log_path}/pinhole/image")
+        except Exception as e:
+            print(f"[RerunLogger] ✗ Failed to log image: {e}")
         self.path_list.append(translation_vector.tolist())
         rr.log(
             f"{self.parent_log_path}/path",
