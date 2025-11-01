@@ -7,6 +7,7 @@ from mast3r_slam.frame import Frame, SharedKeyframes, SharedStates
 from mast3r_slam.mast3r_utils import estimate_focal_knowing_depth
 import lietorch
 from mast3r_slam.lietorch_utils import as_SE3
+from simplecv.ops import conventions
 import rerun.blueprint as rrb
 
 
@@ -33,6 +34,14 @@ class RerunLogger:
         self.parent_log_path: Path = parent_log_path
         # Create a 3x3 rotation matrix for 90-degree rotation around X-axis
         rr.log(f"{self.parent_log_path}", rr.ViewCoordinates.RDF, static=True)
+        # this does not work and I don't know why
+        rr.log(
+            f"{parent_log_path}",
+            rr.Transform3D(
+                rotation=rr.RotationAxisAngle(axis=(0, 0, 1), radians=-np.pi / 4)
+            ),
+            static=True,
+        )
 
         self.path_list = []
         self.keyframe_logged_list = []
@@ -65,8 +74,18 @@ class RerunLogger:
         mat4x4: Float32[np.ndarray, "4 4"] = matb4x4[
             0
         ]  # Extract the first batch element
-        rotation_matrix: Float32[np.ndarray, "3 3"] = mat4x4[:3, :3]
-        translation_vector: Float32[np.ndarray, "3"] = mat4x4[:3, 3]
+
+        mat4x4 = conventions.convert_pose(
+            mat4x4, src_convention=conventions.CC.CV, dst_convention=conventions.CC.GL
+        )
+
+        # Extract rotation (3x3) and translation (1x3) from the 4x4 transformation matrix
+        rotation_matrix: Float32[np.ndarray, "3 3"] = mat4x4[
+            :3, :3
+        ]  # Top-left 3x3 block
+        translation_vector: Float32[np.ndarray, "3"] = mat4x4[
+            :3, 3
+        ]  # Right column, first 3 elements
 
         cam_log_path = self.parent_log_path / "current_camera"
         rr.log(
@@ -80,7 +99,7 @@ class RerunLogger:
                 principal_point=pp.numpy(),
                 height=H,
                 width=W,
-                camera_xyz=rr.ViewCoordinates.RDF,  # OpenCV convention: Right-Down-Forward
+                camera_xyz=rr.ViewCoordinates.RUB,
                 image_plane_distance=self.image_plane_distance * 2,
             ),
         )
@@ -113,8 +132,14 @@ class RerunLogger:
             mat4x4: Float32[np.ndarray, "4 4"] = matb4x4[
                 0
             ]  # Extract the first batch element
-            rotation_matrix: Float32[np.ndarray, "3 3"] = mat4x4[:3, :3]
-            translation_vector: Float32[np.ndarray, "3"] = mat4x4[:3, 3]
+
+            # Extract rotation (3x3) and translation (1x3) from the 4x4 transformation matrix
+            rotation_matrix: Float32[np.ndarray, "3 3"] = mat4x4[
+                :3, :3
+            ]  # Top-left 3x3 block
+            translation_vector: Float32[np.ndarray, "3"] = mat4x4[
+                :3, 3
+            ]  # Right column, first 3 elements
             cam_log_path = self.parent_log_path / "keyframes" / f"keyframe-{kf_idx}"
             if kf_idx not in self.keyframe_logged_list:
                 kf_img: Float32[torch.Tensor, "H W 3"] = keyframe.uimg
