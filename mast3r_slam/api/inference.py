@@ -68,8 +68,7 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
     if inf_config.rerun_server_addr:
         # Get the existing global recording stream
         # This ensures we use the same recording across all threads
-        rec = rr.get_global_data_recording()
-        print(f"[SLAM Inference] Using global recording: {rec.recording_id()}")
+        print(f"[SLAM Inference] Using existing global recording stream")
 
         # Connect to rerun server
         # CRITICAL: Use flush_timeout_sec=0.1 to ensure data is sent immediately
