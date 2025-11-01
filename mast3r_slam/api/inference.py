@@ -130,160 +130,136 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
     fps_timer: float = time.time()
     start_time = timer()
 
-    try:
-        while True:
-            rr.set_time_sequence(timeline="frame", sequence=i)
-            mode: Mode = states.get_mode()
+    while True:
+        rr.set_time_sequence(timeline="frame", sequence=i)
+        mode: Mode = states.get_mode()
 
-            if i == len(dataset):
-                states.set_mode(Mode.TERMINATED)
-                break
+        if i == len(dataset):
+            states.set_mode(Mode.TERMINATED)
+            break
 
-            timestamp, img = dataset[i]
+        timestamp, img = dataset[i]
 
-            # get frames last camera pose
-            T_WC: lietorch.Sim3 = (
-                lietorch.Sim3.Identity(1, device=device)
-                if i == 0
-                else states.get_frame().T_WC
-            )
-            frame: Frame = create_frame(
-                i, img, T_WC, img_size=dataset.img_size, device=device
-            )
+        # Check for graceful shutdown (dataset terminated while waiting)
+        if timestamp is None or img is None:
+            print(f"[SLAM Inference] Dataset terminated, stopping gracefully...")
+            states.set_mode(Mode.TERMINATED)
+            break
 
-            if mode == Mode.INIT:
-                # Initialize via mono inference, and encoded features needed for database
-                X_init, C_init = mast3r_inference_mono(model, frame)
-                frame.update_pointmap(X_init, C_init)
-                keyframes.append(frame)
-                states.queue_global_optimization(len(keyframes) - 1)
-                states.set_mode(Mode.TRACKING)
-                states.set_frame(frame)
-                rr_logger.log_frame(frame, keyframes, states)
+        # get frames last camera pose
+        T_WC: lietorch.Sim3 = (
+            lietorch.Sim3.Identity(1, device=device)
+            if i == 0
+            else states.get_frame().T_WC
+        )
+        frame: Frame = create_frame(
+            i, img, T_WC, img_size=dataset.img_size, device=device
+        )
 
-                # Collect all frames if --all-frames flag is set
-                if inf_config.all_frames:
-                    all_frames.append(frame)
-
-                i += 1
-                continue
-
-            if mode == Mode.TRACKING:
-                add_new_kf, match_info, try_reloc = tracker.track(frame)
-                if try_reloc:
-                    states.set_mode(Mode.RELOC)
-                states.set_frame(frame)
-
-            elif mode == Mode.RELOC:
-                X, C = mast3r_inference_mono(model, frame)
-                frame.update_pointmap(X, C)
-                states.set_frame(frame)
-                states.queue_reloc()
-                # In single threaded mode, make sure relocalization happen for every frame
-                while config["single_thread"]:
-                    with states.lock:
-                        if states.reloc_sem.value == 0:
-                            break
-                    time.sleep(0.01)
-
-            else:
-                raise Exception("Invalid mode")
-
-            if add_new_kf:
-                keyframes.append(frame)
-                states.queue_global_optimization(len(keyframes) - 1)
-                # In single threaded mode, wait for the backend to finish
-                while config["single_thread"]:
-                    with states.lock:
-                        if len(states.global_optimizer_tasks) == 0:
-                            break
-                    time.sleep(0.01)
-
-            ## rerun log stuff
+        if mode == Mode.INIT:
+            # Initialize via mono inference, and encoded features needed for database
+            X_init, C_init = mast3r_inference_mono(model, frame)
+            frame.update_pointmap(X_init, C_init)
+            keyframes.append(frame)
+            states.queue_global_optimization(len(keyframes) - 1)
+            states.set_mode(Mode.TRACKING)
+            states.set_frame(frame)
             rr_logger.log_frame(frame, keyframes, states)
 
             # Collect all frames if --all-frames flag is set
             if inf_config.all_frames:
                 all_frames.append(frame)
 
-            # log time
-            if i % 30 == 0:
-                FPS = i / (time.time() - fps_timer)
-                print(f"FPS: {FPS}")
             i += 1
+            continue
 
-        # Save results if needed (before cleanup)
-        if dataset.save_results:
-            save_dir, seq_name = eval.prepare_savedir(inf_config, dataset)
+        if mode == Mode.TRACKING:
+            add_new_kf, match_info, try_reloc = tracker.track(frame)
+            if try_reloc:
+                states.set_mode(Mode.RELOC)
+            states.set_frame(frame)
 
-            # Use all_frames if --all-frames flag is set, otherwise use keyframes
-            if inf_config.all_frames:
-                # Create a temporary SharedKeyframes object to hold all frames
-                h, w = dataset.get_img_shape()[0]
-                all_frames_shared = SharedKeyframes(manager, h, w, buffer=len(all_frames))
-                for frame in all_frames:
-                    all_frames_shared.append(frame)
-                frames_to_save = all_frames_shared
-            else:
-                frames_to_save = keyframes
+        elif mode == Mode.RELOC:
+            X, C = mast3r_inference_mono(model, frame)
+            frame.update_pointmap(X, C)
+            states.set_frame(frame)
+            states.queue_reloc()
+            # In single threaded mode, make sure relocalization happen for every frame
+            while config["single_thread"]:
+                with states.lock:
+                    if states.reloc_sem.value == 0:
+                        break
+                time.sleep(0.01)
 
-            eval.save_ATE(save_dir, f"{seq_name}.txt", dataset.timestamps, frames_to_save)
-            eval.save_reconstruction(
-                save_dir, f"{seq_name}.pt", dataset.timestamps, frames_to_save
-            )
-            eval.save_keyframes(
-                save_dir / "keyframes" / seq_name, dataset.timestamps, frames_to_save
-            )
-
-        if inf_config.ns_save_path is not None:
-            pcd = save_kf_to_nerfstudio(
-                ns_save_path=inf_config.ns_save_path,
-                keyframes=keyframes,
-            )
-            rr.log(
-                f"{parent_log_path}/final_pointcloud",
-                rr.Points3D(positions=pcd.points, colors=pcd.colors),
-            )
-
-        print("done")
-        print(f"Inference time: {format_time(timer() - start_time)}")
-        if inf_config.all_frames:
-            print(f"Processed {len(all_frames)} frames (all frames mode)")
         else:
-            print(f"Processed {len(keyframes)} keyframes")
-        backend.join()
-        if not inf_config.no_viz:
-            print("All visualization processes terminated")
+            raise Exception("Invalid mode")
 
-    finally:
-        # ALWAYS cleanup GPU memory, even if exception occurs
-        print(f"[SLAM Inference] Cleaning up GPU memory...")
-        try:
-            import gc
+        if add_new_kf:
+            keyframes.append(frame)
+            states.queue_global_optimization(len(keyframes) - 1)
+            # In single threaded mode, wait for the backend to finish
+            while config["single_thread"]:
+                with states.lock:
+                    if len(states.global_optimizer_tasks) == 0:
+                        break
+                time.sleep(0.01)
 
-            # Delete large objects
-            del model
-            del tracker
-            del keyframes
-            del states
-            if all_frames is not None:
-                del all_frames
+        ## rerun log stuff
+        rr_logger.log_frame(frame, keyframes, states)
 
-            # Force garbage collection
-            for _ in range(3):
-                gc.collect()
+        # Collect all frames if --all-frames flag is set
+        if inf_config.all_frames:
+            all_frames.append(frame)
 
-            # Clear CUDA cache
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                torch.cuda.synchronize()
-                torch.cuda.empty_cache()
+        # log time
+        if i % 30 == 0:
+            FPS = i / (time.time() - fps_timer)
+            print(f"FPS: {FPS}")
+        i += 1
 
-                allocated = torch.cuda.memory_allocated() / 1024**3
-                reserved = torch.cuda.memory_reserved() / 1024**3
-                print(f"[SLAM Inference] ✓ GPU memory after cleanup: {allocated:.2f}GB allocated, {reserved:.2f}GB reserved")
-        except Exception as e:
-            print(f"[SLAM Inference] WARNING: Cleanup failed: {e}")
+    if dataset.save_results:
+        save_dir, seq_name = eval.prepare_savedir(inf_config, dataset)
+
+        # Use all_frames if --all-frames flag is set, otherwise use keyframes
+        if inf_config.all_frames:
+            # Create a temporary SharedKeyframes object to hold all frames
+            h, w = dataset.get_img_shape()[0]
+            all_frames_shared = SharedKeyframes(manager, h, w, buffer=len(all_frames))
+            for frame in all_frames:
+                all_frames_shared.append(frame)
+            frames_to_save = all_frames_shared
+        else:
+            frames_to_save = keyframes
+
+        eval.save_ATE(save_dir, f"{seq_name}.txt", dataset.timestamps, frames_to_save)
+        eval.save_reconstruction(
+            save_dir, f"{seq_name}.pt", dataset.timestamps, frames_to_save
+        )
+        eval.save_keyframes(
+            save_dir / "keyframes" / seq_name, dataset.timestamps, frames_to_save
+        )
+
+    if inf_config.ns_save_path is not None:
+        pcd = save_kf_to_nerfstudio(
+            ns_save_path=inf_config.ns_save_path,
+            keyframes=keyframes,
+        )
+        rr.log(
+            f"{parent_log_path}/final_pointcloud",
+            rr.Points3D(positions=pcd.points, colors=pcd.colors),
+        )
+
+    print("done")
+    print(f"Inference time: {format_time(timer() - start_time)}")
+    if inf_config.all_frames:
+        print(f"Processed {len(all_frames)} frames (all frames mode)")
+    else:
+        print(f"Processed {len(keyframes)} keyframes")
+    backend.join()
+    if not inf_config.no_viz:
+        print("All visualization processes terminated")
+
+
 
     # Keep server alive if serving for visualization
     if inf_config.rr_config.serve:

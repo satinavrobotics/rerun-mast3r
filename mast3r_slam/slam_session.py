@@ -131,11 +131,14 @@ class StreamingDataset:
         """
         Get image at index (compatible with SLAM pipeline).
         Blocks if image not available yet (waiting for ROS node to send it).
+
+        Returns None if dataset is terminated while waiting (graceful shutdown).
         """
         # Wait for image to arrive
         while idx >= len(self.images):
             if self.terminated:
-                raise IndexError(f"Dataset terminated, no image at index {idx}")
+                # Return None to signal graceful shutdown instead of raising exception
+                return None, None
             time.sleep(0.01)  # Wait 10ms and check again
 
         timestamp = self.timestamps[idx]
