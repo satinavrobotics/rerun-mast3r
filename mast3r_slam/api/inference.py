@@ -62,9 +62,15 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
     device = "cuda:0"
 
     ## rerun setup
-    # If a custom rerun server address is provided, connect to it
+    # Only initialize rerun if server address is provided (rerun is enabled)
     if inf_config.rerun_server_addr:
-        print(f"Connecting to rerun server at {inf_config.rerun_server_addr}")
+        # Initialize rerun with unique recording ID (session_id)
+        # This ensures each SLAM session gets its own recording in the rerun viewer
+        rr.init(inf_config.save_as, spawn=False)
+        print(f"[SLAM Inference] Initialized rerun recording: {inf_config.save_as}")
+
+        # Connect to rerun server
+        print(f"[SLAM Inference] Connecting to rerun server at {inf_config.rerun_server_addr}")
         rr.connect_grpc(f"rerun+http://{inf_config.rerun_server_addr}/proxy", flush_timeout_sec=None)
 
     parent_log_path = Path("/world")

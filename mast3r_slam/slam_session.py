@@ -607,7 +607,7 @@ class SLAMSession:
         # Step 2: Wait for SLAM thread to finish processing all existing frames
         if hasattr(self, 'slam_thread') and self.slam_thread and self.slam_thread.is_alive():
             print(f"[SLAM Session {self.session_id}] Waiting for SLAM to finish processing {len(self.dataset.images)} frames...")
-            self.slam_thread.join(timeout=30.0)  # Increased timeout to allow processing
+            self.slam_thread.join(timeout=15.0)  # Increased timeout to allow processing
             if self.slam_thread.is_alive():
                 print(f"[SLAM Session {self.session_id}] WARNING: SLAM thread did not finish within 30s, forcing termination...")
                 # Force terminate if still alive
