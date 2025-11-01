@@ -253,6 +253,35 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
     if not inf_config.no_viz:
         print("All visualization processes terminated")
 
+    # Cleanup GPU memory before exiting
+    print(f"[SLAM Inference] Cleaning up GPU memory...")
+    try:
+        import gc
+
+        # Delete large objects
+        del model
+        del tracker
+        del keyframes
+        del states
+        if all_frames is not None:
+            del all_frames
+
+        # Force garbage collection
+        for _ in range(3):
+            gc.collect()
+
+        # Clear CUDA cache
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+
+            allocated = torch.cuda.memory_allocated() / 1024**3
+            reserved = torch.cuda.memory_reserved() / 1024**3
+            print(f"[SLAM Inference] ✓ GPU memory after cleanup: {allocated:.2f}GB allocated, {reserved:.2f}GB reserved")
+    except Exception as e:
+        print(f"[SLAM Inference] WARNING: Cleanup failed: {e}")
+
     # Keep server alive if serving for visualization
     if inf_config.rr_config.serve:
         print("\n" + "="*60)
