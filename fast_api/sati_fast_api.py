@@ -249,10 +249,14 @@ async def slam_finalize(request: SlamFinalizeRequest):
     Saves results to disk and cleans up session.
     """
     if request.session_id not in active_sessions:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Session {request.session_id} not found"
-        )
+        # Session already finalized or never existed
+        # Return success to make this endpoint idempotent
+        print(f"[SLAM API] Session {request.session_id} already finalized or not found")
+        return {
+            "status": "already_finalized",
+            "session_id": request.session_id,
+            "message": "Session already finalized or not found"
+        }
 
     session = active_sessions[request.session_id]
 
@@ -273,6 +277,14 @@ async def slam_finalize(request: SlamFinalizeRequest):
         }
 
     except Exception as e:
+        # Even if finalization fails, remove from active sessions to prevent memory leak
+        if request.session_id in active_sessions:
+            try:
+                del active_sessions[request.session_id]
+                print(f"[SLAM API] Removed session {request.session_id} from active sessions after error")
+            except Exception:
+                pass
+
         raise HTTPException(
             status_code=500,
             detail=f"Error finalizing session: {str(e)}"
