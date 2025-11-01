@@ -69,6 +69,7 @@ class StreamingDataset:
         self.dtype = np.float32
         self.save_results = False
         self.terminated = False  # Flag to stop SLAM loop
+        self.no_more_frames = False  # Flag to signal no more frames will be added
 
         # Load camera intrinsics from config/intrinsics.yaml
         cfg_path = Path(__file__).parents[1] / "config" / "intrinsics.yaml"
@@ -119,8 +120,10 @@ class StreamingDataset:
         """
         Return a very large number so SLAM loop doesn't terminate.
         The loop will block in __getitem__ waiting for new images.
+
+        When no_more_frames is set, return actual length so SLAM can finish processing.
         """
-        if self.terminated:
+        if self.terminated or self.no_more_frames:
             return len(self.images)
         return 999999  # Effectively infinite
 
@@ -592,17 +595,24 @@ class SLAMSession:
         """
         print(f"[SLAM Session {self.session_id}] Finalizing...")
 
-        # Terminate dataset to stop SLAM loop
+        # Step 1: Signal no more frames will be added (but don't terminate yet)
         if hasattr(self, 'dataset') and self.dataset:
-            print(f"[SLAM Session {self.session_id}] Terminating dataset...")
-            self.dataset.terminate()
+            print(f"[SLAM Session {self.session_id}] Signaling no more frames...")
+            self.dataset.no_more_frames = True
+            # Now __len__ will return actual length, allowing SLAM to finish processing existing frames
 
-        # Wait for SLAM thread to finish (with timeout)
+        # Step 2: Wait for SLAM thread to finish processing all existing frames
         if hasattr(self, 'slam_thread') and self.slam_thread and self.slam_thread.is_alive():
-            print(f"[SLAM Session {self.session_id}] Waiting for SLAM thread to finish...")
-            self.slam_thread.join(timeout=5.0)
+            print(f"[SLAM Session {self.session_id}] Waiting for SLAM to finish processing {len(self.dataset.images)} frames...")
+            self.slam_thread.join(timeout=30.0)  # Increased timeout to allow processing
             if self.slam_thread.is_alive():
-                print(f"[SLAM Session {self.session_id}] WARNING: SLAM thread did not terminate within timeout")
+                print(f"[SLAM Session {self.session_id}] WARNING: SLAM thread did not finish within 30s, forcing termination...")
+                # Force terminate if still alive
+                if hasattr(self, 'dataset') and self.dataset:
+                    self.dataset.terminate()
+                self.slam_thread.join(timeout=5.0)
+            else:
+                print(f"[SLAM Session {self.session_id}] ✓ SLAM thread finished processing all frames")
 
         # Terminate subprocesses (backend, frontend)
         try:
