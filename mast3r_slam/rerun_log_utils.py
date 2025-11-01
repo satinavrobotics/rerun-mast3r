@@ -31,9 +31,8 @@ def create_blueprints(parent_log_path: Path) -> rrb.Blueprint:
 class RerunLogger:
     def __init__(self, parent_log_path: Path):
         self.parent_log_path: Path = parent_log_path
-        # Set world coordinate system to RDF (OpenCV convention)
-        # This matches the coordinate system used by MASt3R-SLAM and Webots/ROS cameras
-        rr.log(f"{parent_log_path}", rr.ViewCoordinates.RDF, static=True)
+        # Create a 3x3 rotation matrix for 90-degree rotation around X-axis
+        rr.log(f"{self.parent_log_path}", rr.ViewCoordinates.RDF, static=True)
 
         self.path_list = []
         self.keyframe_logged_list = []
@@ -60,25 +59,14 @@ class RerunLogger:
         rgb_img: UInt8[np.ndarray, "H W 3"] = (rgb_img * 255).numpy().astype(np.uint8)
 
         se3_pose: lietorch.SE3 = as_SE3(current_frame.T_WC.cpu())
-        matb4x4_w2c: Float32[np.ndarray, "1 4 4"] = (
+        matb4x4: Float32[np.ndarray, "1 4 4"] = (
             se3_pose.matrix().numpy().astype(dtype=np.float32)
         )
-        mat4x4_w2c: Float32[np.ndarray, "4 4"] = matb4x4_w2c[
+        mat4x4: Float32[np.ndarray, "4 4"] = matb4x4[
             0
-        ]  # Extract the first batch element (World-to-Camera)
-
-        # T_WC is World-to-Camera, but Rerun needs Camera-to-World
-        # Invert the transformation: T_CW = inv(T_WC)
-        R_w2c = mat4x4_w2c[:3, :3]
-        t_w2c = mat4x4_w2c[:3, 3]
-
-        # For rigid transformation: inv([R|t]) = [R^T | -R^T * t]
-        R_c2w = R_w2c.T
-        t_c2w = -R_c2w @ t_w2c
-
-        # MASt3R-SLAM uses OpenCV (RDF) convention - keep it!
-        rotation_matrix: Float32[np.ndarray, "3 3"] = R_c2w
-        translation_vector: Float32[np.ndarray, "3"] = t_c2w
+        ]  # Extract the first batch element
+        rotation_matrix: Float32[np.ndarray, "3 3"] = mat4x4[:3, :3]
+        translation_vector: Float32[np.ndarray, "3"] = mat4x4[:3, 3]
 
         cam_log_path = self.parent_log_path / "current_camera"
         rr.log(
@@ -119,24 +107,14 @@ class RerunLogger:
         for kf_idx in range(N_keyframes):
             keyframe: Frame = keyframes[kf_idx]
             se3_pose: lietorch.SE3 = as_SE3(keyframe.T_WC.cpu())
-            matb4x4_w2c: Float32[np.ndarray, "1 4 4"] = (
+            matb4x4: Float32[np.ndarray, "1 4 4"] = (
                 se3_pose.matrix().numpy().astype(dtype=np.float32)
             )
-            mat4x4_w2c: Float32[np.ndarray, "4 4"] = matb4x4_w2c[
+            mat4x4: Float32[np.ndarray, "4 4"] = matb4x4[
                 0
-            ]  # Extract the first batch element (World-to-Camera)
-
-            # T_WC is World-to-Camera, but Rerun needs Camera-to-World
-            # Invert the transformation: T_CW = inv(T_WC)
-            R_w2c_kf = mat4x4_w2c[:3, :3]
-            t_w2c_kf = mat4x4_w2c[:3, 3]
-
-            # For rigid transformation: inv([R|t]) = [R^T | -R^T * t]
-            R_c2w_kf = R_w2c_kf.T
-            t_c2w_kf = -R_c2w_kf @ t_w2c_kf
-
-            rotation_matrix: Float32[np.ndarray, "3 3"] = R_c2w_kf
-            translation_vector: Float32[np.ndarray, "3"] = t_c2w_kf
+            ]  # Extract the first batch element
+            rotation_matrix: Float32[np.ndarray, "3 3"] = mat4x4[:3, :3]
+            translation_vector: Float32[np.ndarray, "3"] = mat4x4[:3, 3]
             cam_log_path = self.parent_log_path / "keyframes" / f"keyframe-{kf_idx}"
             if kf_idx not in self.keyframe_logged_list:
                 kf_img: Float32[torch.Tensor, "H W 3"] = keyframe.uimg
