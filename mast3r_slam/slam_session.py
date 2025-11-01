@@ -229,6 +229,7 @@ class SLAMSession:
         self.poses: List[PoseEstimate] = []
         self.frame_count = 0
         self.is_initialized = False
+        self.crashed = False  # Track if SLAM thread crashed
         self.start_time = time.time()
 
         # JSON Lines output file for incremental pose logging
@@ -466,6 +467,25 @@ class SLAMSession:
             print(f"[SLAM Session {self.session_id}] ✗ SLAM inference error: {e}")
             import traceback
             traceback.print_exc()
+
+            # Mark session as crashed so it can be cleaned up
+            self.crashed = True
+
+            # Attempt emergency GPU cleanup
+            try:
+                import torch
+                import gc
+                print(f"[SLAM Session {self.session_id}] Attempting emergency GPU cleanup...")
+                for _ in range(3):
+                    gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+                    torch.cuda.empty_cache()
+                    allocated = torch.cuda.memory_allocated() / 1024**3
+                    print(f"[SLAM Session {self.session_id}] Emergency cleanup: {allocated:.2f}GB still allocated")
+            except Exception as cleanup_error:
+                print(f"[SLAM Session {self.session_id}] Emergency cleanup failed: {cleanup_error}")
         finally:
             # Restore original working directory and functions
             print(f"[SLAM Session {self.session_id}] Restoring original functions")
@@ -491,6 +511,15 @@ class SLAMSession:
 
         if not self.real_time:
             raise RuntimeError("add_frame() only works in real-time mode")
+
+        # Check if SLAM thread has crashed
+        if hasattr(self, 'crashed') and self.crashed:
+            raise RuntimeError(f"SLAM session {self.session_id} has crashed. Please finalize and create a new session.")
+
+        if hasattr(self, 'slam_thread') and not self.slam_thread.is_alive():
+            # Thread died unexpectedly
+            self.crashed = True
+            raise RuntimeError(f"SLAM thread died unexpectedly. Session {self.session_id} is no longer usable.")
 
         # Add image to streaming dataset (SLAM thread will pick it up)
         timestamp = time.time()

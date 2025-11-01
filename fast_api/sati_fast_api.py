@@ -199,6 +199,22 @@ async def slam_process_frame(request: SlamFrameRequest):
 
     session = active_sessions[request.session_id]
 
+    # Check if session has crashed
+    if hasattr(session, 'crashed') and session.crashed:
+        # Auto-cleanup crashed session
+        print(f"[SLAM API] Session {request.session_id} has crashed, auto-cleaning up...")
+        try:
+            session.finalize(save_as=f"{request.session_id}_crashed")
+        except Exception as e:
+            print(f"[SLAM API] Failed to finalize crashed session: {e}")
+        finally:
+            del active_sessions[request.session_id]
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Session {request.session_id} has crashed and been cleaned up. Please create a new session."
+        )
+
     try:
         # Decode base64 image
         image_bytes = base64.b64decode(request.image_base64)
