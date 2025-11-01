@@ -345,7 +345,8 @@ class SLAMSession:
                 "--config", self.config_path,
                 "--save-as", self.session_id,
                 "--img-size", str(self.img_size),
-                "--all-frames",
+                # NOTE: --all-frames is NOT used in real-time mode to save memory
+                # Real-time SLAM only needs keyframe poses, not every single frame
                 "--real-time",
                 "--rr-config.headless",
             ]
@@ -575,34 +576,55 @@ class SLAMSession:
     def finalize(self, save_as: Optional[str] = None) -> Dict:
         """
         Finalize session and save results.
-        
+
         Args:
             save_as: Optional name for final output file
-            
+
         Returns:
             Summary dict with trajectory and statistics
         """
         print(f"[SLAM Session {self.session_id}] Finalizing...")
-        
+
+        # Terminate dataset to stop SLAM loop
+        if hasattr(self, 'dataset') and self.dataset:
+            print(f"[SLAM Session {self.session_id}] Terminating dataset...")
+            self.dataset.terminate()
+
+        # Wait for SLAM thread to finish (with timeout)
+        if hasattr(self, 'slam_thread') and self.slam_thread and self.slam_thread.is_alive():
+            print(f"[SLAM Session {self.session_id}] Waiting for SLAM thread to finish...")
+            self.slam_thread.join(timeout=5.0)
+            if self.slam_thread.is_alive():
+                print(f"[SLAM Session {self.session_id}] WARNING: SLAM thread did not terminate within timeout")
+
         # Close pose file
         if self.pose_file:
             self.pose_file.close()
-        
+
+        # Free CUDA memory
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                print(f"[SLAM Session {self.session_id}] Cleared CUDA cache")
+        except Exception as e:
+            print(f"[SLAM Session {self.session_id}] Failed to clear CUDA cache: {e}")
+
         # Save final trajectory as JSON
         output_name = save_as or self.session_id
         traj_file = self.output_dir / f"{output_name}_traj_data.json"
-        
+
         trajectory = self.get_trajectory()
         with open(traj_file, 'w') as f:
             json.dump(trajectory, f, indent=2)
-        
+
         duration = time.time() - self.start_time
-        
+
         print(f"[SLAM Session {self.session_id}] Finalized")
         print(f"  Total frames: {len(self.poses)}")
         print(f"  Duration: {duration:.1f}s")
         print(f"  Trajectory saved to: {traj_file}")
-        
+
         return {
             "session_id": self.session_id,
             "num_frames": len(self.poses),

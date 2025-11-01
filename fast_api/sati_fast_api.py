@@ -322,3 +322,26 @@ async def get_current_pose(session_id: str):
         }
     }
 
+@app.delete("/slam/cleanup/{session_id}")
+async def cleanup_session(session_id: str):
+    """Force cleanup of a SLAM session (useful for freeing GPU memory)"""
+    if session_id not in active_sessions:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Session {session_id} not found"
+        )
+
+    session = active_sessions[session_id]
+
+    try:
+        # Finalize without saving
+        session.finalize()
+        del active_sessions[session_id]
+
+        return {
+            "status": "success",
+            "message": f"Session {session_id} cleaned up successfully"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Cleanup failed: {str(e)}")
+
