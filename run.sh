@@ -6,9 +6,9 @@ conda activate mast3r-slam
 # rerun --connect rerun+http://0.0.0.0:9878/proxy
 
 # CLI usage example:
-python sati_master_slam.py \
+python /workspace/rerun_mast3r/sati_master_slam.py \
   --dataset /workspace/dataset/rgb_no23vcF_69_0 \
-  --config config/base.yaml \
+  --config /workspace/rerun_mast3r/config/calib.yaml \
   --save-as stanford_out \
   --img-size 512 \
   --all-frames \

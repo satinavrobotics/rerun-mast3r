@@ -22,7 +22,42 @@ def load_mast3r(path=None, device="cuda"):
         if path is None
         else path
     )
-    model = AsymmetricMASt3R.from_pretrained(weights_path).to(device)
+
+    # Patch the load_model function to fix img_size format issue
+    import mast3r.model as mast3r_model_module
+    original_load_model = mast3r_model_module.load_model
+
+    def patched_load_model(model_path, device, verbose=True):
+        if verbose:
+            print('... loading model from', model_path)
+        ckpt = torch.load(model_path, map_location='cpu')
+        args = ckpt['args'].model.replace("ManyAR_PatchEmbed", "PatchEmbedDust3R")
+        if 'landscape_only' not in args:
+            args = args[:-1] + ', landscape_only=False)'
+        else:
+            args = args.replace(" ", "").replace('landscape_only=True', 'landscape_only=False')
+
+        # Fix img_size format: convert img_size=512 to img_size=(512, 512)
+        import re
+        args = re.sub(r'img_size=(\d+)', r'img_size=(\1, \1)', args)
+
+        assert "landscape_only=False" in args
+        if verbose:
+            print(f"instantiating : {args}")
+        net = eval(args)
+        s = net.load_state_dict(ckpt['model'], strict=False)
+        if verbose:
+            print(s)
+        return net.to(device)
+
+    # Temporarily replace load_model
+    mast3r_model_module.load_model = patched_load_model
+    try:
+        model = AsymmetricMASt3R.from_pretrained(weights_path).to(device)
+    finally:
+        # Restore original function
+        mast3r_model_module.load_model = original_load_model
+
     return model
 
 
