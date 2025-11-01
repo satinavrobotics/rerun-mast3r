@@ -167,8 +167,13 @@ class StreamingDataset:
         img = self.images[0]
         # Convert BGR to RGB (same as MonocularDataset.read_img())
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        # Apply camera calibration (undistortion) if available
+        if self.camera_intrinsics is not None:
+            img = self.camera_intrinsics.remap(img)
         raw_img_shape = img.shape
-        img = resize_img(img, self.img_size)
+        # Normalize to [0, 1] before resize_img (resize_img expects normalized input)
+        img_normalized = img.astype(self.dtype) / 255.0
+        img = resize_img(img_normalized, self.img_size)
         shape_result = img["img"][0].shape[1:], raw_img_shape[:2]
         print(f"[StreamingDataset] ✓ Image shape: {shape_result}")
         return shape_result
