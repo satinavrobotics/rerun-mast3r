@@ -44,6 +44,9 @@ def load_mast3r(path=None, device="cuda"):
         assert "landscape_only=False" in args
         if verbose:
             print(f"instantiating : {args}")
+
+        # Define inf for eval() context
+        from math import inf
         net = eval(args)
         s = net.load_state_dict(ckpt['model'], strict=False)
         if verbose:
