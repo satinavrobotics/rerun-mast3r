@@ -146,15 +146,18 @@ class StreamingDataset:
         return timestamp, img
 
     def get_image(self, idx):
-        """Get preprocessed image"""
+        """Get preprocessed image (matches MonocularDataset.get_image() behavior)"""
         img = self.images[idx]
+        # Convert BGR to RGB (images come from cv2.imdecode which returns BGR)
+        # This matches MonocularDataset.read_img() which does cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         # Apply camera calibration (undistortion)
         if self.camera_intrinsics is not None:
             img = self.camera_intrinsics.remap(img)
         return img.astype(self.dtype) / 255.0
 
     def get_img_shape(self):
-        """Get image shape"""
+        """Get image shape (matches MonocularDataset.get_img_shape() behavior)"""
         from mast3r_slam.dataloader import resize_img
         print(f"[StreamingDataset] get_img_shape() called, waiting for first image...")
         # Wait for first image
@@ -162,6 +165,8 @@ class StreamingDataset:
             time.sleep(0.01)
         print(f"[StreamingDataset] ✓ First image available, computing shape...")
         img = self.images[0]
+        # Convert BGR to RGB (same as MonocularDataset.read_img())
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         raw_img_shape = img.shape
         img = resize_img(img, self.img_size)
         shape_result = img["img"][0].shape[1:], raw_img_shape[:2]

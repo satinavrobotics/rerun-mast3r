@@ -2,4 +2,4 @@ inherit: "/workspace/rerun_mast3r/config/base.yaml"
 
 use_calib: True
 dataset:
-  subsample: 1
+  subsample: 2
