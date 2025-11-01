@@ -62,27 +62,21 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
     device = "cuda:0"
 
     ## rerun setup
-    # Only initialize rerun if server address is provided (rerun is enabled)
+    # Initialize rerun with unique recording ID (session_id)
+    # This ensures each SLAM session gets its own recording in the rerun viewer
+    rr.init(inf_config.save_as, spawn=False)
+    print(f"[SLAM Inference] Initialized rerun recording: {inf_config.save_as}")
+
+    # If a custom rerun server address is provided, connect to it
     if inf_config.rerun_server_addr:
-        # Initialize rerun with unique recording ID (session_id)
-        # This ensures each SLAM session gets its own recording in the rerun viewer
-        rr.init(inf_config.save_as, spawn=False)
-        print(f"[SLAM Inference] ✓ Initialized rerun recording: '{inf_config.save_as}'")
-
-        # Connect to rerun server
-        print(f"[SLAM Inference] Connecting to rerun server at {inf_config.rerun_server_addr}...")
+        print(f"[SLAM Inference] Connecting to rerun server at {inf_config.rerun_server_addr}")
         rr.connect_grpc(f"rerun+http://{inf_config.rerun_server_addr}/proxy", flush_timeout_sec=None)
-        print(f"[SLAM Inference] ✓ Connected to rerun server")
 
-        parent_log_path = Path("/world")
-        rr_logger = RerunLogger(parent_log_path)
-        # create a blueprint
-        blueprint: rrb.Blueprint = create_blueprints(parent_log_path)
-        rr.send_blueprint(blueprint)
-        print(f"[SLAM Inference] ✓ Sent rerun blueprint")
-    else:
-        print(f"[SLAM Inference] Rerun disabled (no server address provided)")
-        rr_logger = None
+    parent_log_path = Path("/world")
+    rr_logger = RerunLogger(parent_log_path)
+    # create a blueprint
+    blueprint: rrb.Blueprint = create_blueprints(parent_log_path)
+    rr.send_blueprint(blueprint)
 
     load_config(inf_config.config)
     print(inf_config.dataset)
@@ -175,9 +169,7 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
             states.queue_global_optimization(len(keyframes) - 1)
             states.set_mode(Mode.TRACKING)
             states.set_frame(frame)
-            if rr_logger:
-                rr_logger.log_frame(frame, keyframes, states)
-                print(f"[SLAM Inference] ✓ Logged INIT frame to rerun")
+            rr_logger.log_frame(frame, keyframes, states)
 
             # Collect all frames if --all-frames flag is set
             if inf_config.all_frames:
@@ -218,10 +210,7 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
                 time.sleep(0.01)
 
         ## rerun log stuff
-        if rr_logger:
-            rr_logger.log_frame(frame, keyframes, states)
-            if i % 10 == 0:  # Log every 10th frame to avoid spam
-                print(f"[SLAM Inference] ✓ Logged frame {i} to rerun")
+        rr_logger.log_frame(frame, keyframes, states)
 
         # Collect all frames if --all-frames flag is set
         if inf_config.all_frames:
