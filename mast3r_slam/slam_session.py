@@ -150,10 +150,10 @@ class StreamingDataset:
         img = self.images[idx]
         print(f"[StreamingDataset.get_image({idx})] Input: shape={img.shape}, dtype={img.dtype}, range=[{img.min()}, {img.max()}]")
 
-        # Convert BGR to RGB (images come from cv2.imdecode which returns BGR)
-        # This matches MonocularDataset.read_img() which does cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        print(f"[StreamingDataset.get_image({idx})] After BGR→RGB: shape={img.shape}, dtype={img.dtype}")
+        # TEMPORARY: Skip BGR→RGB conversion to test if images appear in Rerun
+        # TODO: Re-enable this after debugging
+        # img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        # print(f"[StreamingDataset.get_image({idx})] After BGR→RGB: shape={img.shape}, dtype={img.dtype}")
 
         # Apply camera calibration (undistortion)
         if self.camera_intrinsics is not None:
