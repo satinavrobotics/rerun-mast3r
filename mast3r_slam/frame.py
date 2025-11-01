@@ -3,6 +3,7 @@ from enum import Enum
 from typing import Optional
 import lietorch
 import torch
+import numpy as np
 from mast3r_slam.mast3r_utils import resize_img
 from mast3r_slam.config import config
 
