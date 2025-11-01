@@ -638,15 +638,26 @@ class SLAMSession:
                 if hasattr(self, 'dataset'):
                     del self.dataset
                     print(f"[SLAM Session {self.session_id}] ✓ Deleted dataset")
+                if hasattr(self, 'slam_states'):
+                    del self.slam_states
+                    print(f"[SLAM Session {self.session_id}] ✓ Deleted SLAM states")
 
-            # Force garbage collection
-            gc.collect()
-            print(f"[SLAM Session {self.session_id}] ✓ Garbage collection completed")
+            # Force garbage collection MULTIPLE times (helps with circular references)
+            for _ in range(3):
+                gc.collect()
+            print(f"[SLAM Session {self.session_id}] ✓ Garbage collection completed (3 passes)")
 
-            # Clear CUDA cache
+            # Clear CUDA cache AGGRESSIVELY
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+                torch.cuda.synchronize()  # Wait for all CUDA operations to complete
+                torch.cuda.empty_cache()  # Clear again after sync
+
+                # Report memory stats
+                allocated = torch.cuda.memory_allocated() / 1024**3  # GB
+                reserved = torch.cuda.memory_reserved() / 1024**3  # GB
                 print(f"[SLAM Session {self.session_id}] ✓ Cleared CUDA cache")
+                print(f"[SLAM Session {self.session_id}]   GPU memory: {allocated:.2f}GB allocated, {reserved:.2f}GB reserved")
         except Exception as e:
             print(f"[SLAM Session {self.session_id}] WARNING: Failed to cleanup memory: {e}")
 

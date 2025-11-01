@@ -345,3 +345,36 @@ async def cleanup_session(session_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Cleanup failed: {str(e)}")
 
+@app.delete("/slam/cleanup_all")
+async def cleanup_all_sessions():
+    """Force cleanup of ALL SLAM sessions (useful for freeing GPU memory)"""
+    import torch
+    import gc
+
+    session_ids = list(active_sessions.keys())
+    cleaned = []
+    errors = []
+
+    for session_id in session_ids:
+        try:
+            session = active_sessions[session_id]
+            session.finalize()
+            del active_sessions[session_id]
+            cleaned.append(session_id)
+        except Exception as e:
+            errors.append({"session_id": session_id, "error": str(e)})
+
+    # Force aggressive cleanup
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+        torch.cuda.empty_cache()
+
+    return {
+        "status": "success",
+        "cleaned_sessions": cleaned,
+        "errors": errors,
+        "remaining_sessions": len(active_sessions)
+    }
+
