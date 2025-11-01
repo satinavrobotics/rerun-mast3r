@@ -382,6 +382,7 @@ class SLAMSession:
                 # Real-time SLAM only needs keyframe poses, not every single frame
                 "--real-time",
                 "--rr-config.headless",
+                "--rr-config.recording-id", self.session_id,  # Set recording ID to session_id
             ]
 
             if self.rerun_server_addr:

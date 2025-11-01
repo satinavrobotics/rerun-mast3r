@@ -62,12 +62,13 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
     device = "cuda:0"
 
     ## rerun setup
-    # Only initialize rerun if server address is provided (rerun is enabled)
+    # Only connect to rerun server if server address is provided (rerun is enabled)
+    # NOTE: rr.init() was already called by RerunTyroConfig.__post_init__()
+    # Calling rr.init() again would create a NEW recording and break the connection!
     if inf_config.rerun_server_addr:
-        # Initialize rerun with unique recording ID (session_id)
-        # This ensures each SLAM session gets its own recording in the rerun viewer
-        rr.init(inf_config.save_as, spawn=False)
-        print(f"[SLAM Inference] Initialized rerun recording: {inf_config.save_as}")
+        # Get the existing recording stream created by RerunTyroConfig
+        rec = rr.get_global_data_recording()
+        print(f"[SLAM Inference] Using existing rerun recording: {rec.recording_id()}")
 
         # Connect to rerun server
         # CRITICAL: Use flush_timeout_sec=0.1 to ensure data is sent immediately
