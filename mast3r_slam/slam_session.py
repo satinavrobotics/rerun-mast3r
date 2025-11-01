@@ -597,18 +597,51 @@ class SLAMSession:
             if self.slam_thread.is_alive():
                 print(f"[SLAM Session {self.session_id}] WARNING: SLAM thread did not terminate within timeout")
 
+        # Terminate subprocesses (backend, frontend)
+        try:
+            from mast3r_slam.api.inference import _active_processes
+            if self.session_id in _active_processes:
+                processes = _active_processes[self.session_id]
+                for name, proc in processes.items():
+                    if proc and proc.is_alive():
+                        print(f"[SLAM Session {self.session_id}] Terminating {name} process (PID: {proc.pid})...")
+                        proc.terminate()
+                        proc.join(timeout=5.0)
+                        if proc.is_alive():
+                            print(f"[SLAM Session {self.session_id}] WARNING: {name} process did not terminate, killing...")
+                            proc.kill()
+                            proc.join(timeout=2.0)
+                        print(f"[SLAM Session {self.session_id}] ✓ {name} process terminated")
+                del _active_processes[self.session_id]
+                print(f"[SLAM Session {self.session_id}] ✓ All subprocesses cleaned up")
+        except Exception as e:
+            print(f"[SLAM Session {self.session_id}] WARNING: Failed to cleanup subprocesses: {e}")
+
         # Close pose file
         if self.pose_file:
             self.pose_file.close()
 
-        # Free CUDA memory
+        # Free CUDA memory and cleanup large objects
         try:
             import torch
+            import gc
+
+            # Delete large objects if SLAM thread is dead
+            if hasattr(self, 'slam_thread') and not self.slam_thread.is_alive():
+                if hasattr(self, 'dataset'):
+                    del self.dataset
+                    print(f"[SLAM Session {self.session_id}] ✓ Deleted dataset")
+
+            # Force garbage collection
+            gc.collect()
+            print(f"[SLAM Session {self.session_id}] ✓ Garbage collection completed")
+
+            # Clear CUDA cache
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-                print(f"[SLAM Session {self.session_id}] Cleared CUDA cache")
+                print(f"[SLAM Session {self.session_id}] ✓ Cleared CUDA cache")
         except Exception as e:
-            print(f"[SLAM Session {self.session_id}] Failed to clear CUDA cache: {e}")
+            print(f"[SLAM Session {self.session_id}] WARNING: Failed to cleanup memory: {e}")
 
         # Save final trajectory as JSON
         output_name = save_as or self.session_id

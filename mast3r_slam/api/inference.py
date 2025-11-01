@@ -29,6 +29,10 @@ import rerun.blueprint as rrb
 from mast3r_slam.rerun_log_utils import create_blueprints, RerunLogger
 from mast3r_slam.nerfstudio_utils import save_kf_to_nerfstudio
 
+# Track active subprocesses for cleanup
+# session_id -> {'backend': Process, 'frontend': Process}
+_active_processes = {}
+
 
 def format_time(seconds):
     """Format time in minutes:seconds format (mm:ss)."""
@@ -114,6 +118,10 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
         target=run_backend, args=(inf_config.config, model, states, keyframes, K)
     )
     backend.start()
+
+    # Store backend process for cleanup
+    session_id = inf_config.save_as
+    _active_processes[session_id] = {'backend': backend}
 
     # Collect all frames if --all-frames flag is set
     all_frames = [] if inf_config.all_frames else None
