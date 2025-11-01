@@ -53,10 +53,8 @@ class MonocularDataset(torch.utils.data.Dataset):
         return img.astype(self.dtype) / 255.0
 
     def get_img_shape(self):
-        # Use get_image() to get properly preprocessed image (BGR→RGB, undistorted, normalized)
-        # This ensures resize_img() receives float [0, 1] input as expected
-        img = self.get_image(0)
-        raw_img_shape = self.read_img(0).shape
+        img = self.read_img(0)
+        raw_img_shape = img.shape
         img = resize_img(img, self.img_size)
         # 3XHxW, HxWx3 -> HxW, HxW
         return img["img"][0].shape[1:], raw_img_shape[:2]

@@ -67,17 +67,22 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
         # Initialize rerun with unique recording ID (session_id)
         # This ensures each SLAM session gets its own recording in the rerun viewer
         rr.init(inf_config.save_as, spawn=False)
-        print(f"[SLAM Inference] Initialized rerun recording: {inf_config.save_as}")
+        print(f"[SLAM Inference] ✓ Initialized rerun recording: '{inf_config.save_as}'")
 
         # Connect to rerun server
-        print(f"[SLAM Inference] Connecting to rerun server at {inf_config.rerun_server_addr}")
+        print(f"[SLAM Inference] Connecting to rerun server at {inf_config.rerun_server_addr}...")
         rr.connect_grpc(f"rerun+http://{inf_config.rerun_server_addr}/proxy", flush_timeout_sec=None)
+        print(f"[SLAM Inference] ✓ Connected to rerun server")
 
-    parent_log_path = Path("/world")
-    rr_logger = RerunLogger(parent_log_path)
-    # create a blueprint
-    blueprint: rrb.Blueprint = create_blueprints(parent_log_path)
-    rr.send_blueprint(blueprint)
+        parent_log_path = Path("/world")
+        rr_logger = RerunLogger(parent_log_path)
+        # create a blueprint
+        blueprint: rrb.Blueprint = create_blueprints(parent_log_path)
+        rr.send_blueprint(blueprint)
+        print(f"[SLAM Inference] ✓ Sent rerun blueprint")
+    else:
+        print(f"[SLAM Inference] Rerun disabled (no server address provided)")
+        rr_logger = None
 
     load_config(inf_config.config)
     print(inf_config.dataset)
@@ -170,7 +175,9 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
             states.queue_global_optimization(len(keyframes) - 1)
             states.set_mode(Mode.TRACKING)
             states.set_frame(frame)
-            rr_logger.log_frame(frame, keyframes, states)
+            if rr_logger:
+                rr_logger.log_frame(frame, keyframes, states)
+                print(f"[SLAM Inference] ✓ Logged INIT frame to rerun")
 
             # Collect all frames if --all-frames flag is set
             if inf_config.all_frames:
@@ -211,7 +218,10 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
                 time.sleep(0.01)
 
         ## rerun log stuff
-        rr_logger.log_frame(frame, keyframes, states)
+        if rr_logger:
+            rr_logger.log_frame(frame, keyframes, states)
+            if i % 10 == 0:  # Log every 10th frame to avoid spam
+                print(f"[SLAM Inference] ✓ Logged frame {i} to rerun")
 
         # Collect all frames if --all-frames flag is set
         if inf_config.all_frames:
