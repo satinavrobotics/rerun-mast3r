@@ -73,26 +73,11 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
         print(f"[SLAM Inference] Connecting to rerun server at {inf_config.rerun_server_addr}")
         rr.connect_grpc(f"rerun+http://{inf_config.rerun_server_addr}/proxy", flush_timeout_sec=None)
 
-        # Explicitly flush to ensure connection is established
-        try:
-            rr.flush(blocking=True)
-            print(f"[SLAM Inference] ✓ Rerun connection established and flushed")
-        except Exception as e:
-            print(f"[SLAM Inference] ⚠ Warning: Rerun flush failed: {e}")
-
     parent_log_path = Path("/world")
     rr_logger = RerunLogger(parent_log_path)
     # create a blueprint
     blueprint: rrb.Blueprint = create_blueprints(parent_log_path)
     rr.send_blueprint(blueprint)
-
-    # Flush blueprint to ensure it's sent immediately
-    if inf_config.rerun_server_addr:
-        try:
-            rr.flush(blocking=True)
-            print(f"[SLAM Inference] ✓ Blueprint sent and flushed")
-        except Exception as e:
-            print(f"[SLAM Inference] ⚠ Warning: Blueprint flush failed: {e}")
 
     load_config(inf_config.config)
     print(inf_config.dataset)
@@ -228,14 +213,6 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
         ## rerun log stuff
         rr_logger.log_frame(frame, keyframes, states)
 
-        # Periodic flush every 10 frames to ensure data is sent in real-time
-        # This is especially important for daemon threads
-        if inf_config.rerun_server_addr and i % 10 == 0:
-            try:
-                rr.flush(blocking=False)
-            except Exception:
-                pass  # Don't crash on flush errors
-
         # Collect all frames if --all-frames flag is set
         if inf_config.all_frames:
             all_frames.append(frame)
@@ -287,15 +264,6 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
     backend.join()
     if not inf_config.no_viz:
         print("All visualization processes terminated")
-
-    # Final flush to ensure all rerun data is sent before cleanup
-    if inf_config.rerun_server_addr:
-        try:
-            print(f"[SLAM Inference] Flushing final rerun data...")
-            rr.flush(blocking=True)
-            print(f"[SLAM Inference] ✓ Final rerun data flushed")
-        except Exception as e:
-            print(f"[SLAM Inference] ⚠ Warning: Final flush failed: {e}")
 
 
 

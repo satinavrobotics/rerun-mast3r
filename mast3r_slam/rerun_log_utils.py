@@ -119,14 +119,6 @@ class RerunLogger:
             ),
         )
 
-        # Explicitly flush rerun data to ensure it's sent immediately
-        # This is critical for daemon threads which don't auto-flush
-        try:
-            rr.flush(blocking=False)
-        except Exception as e:
-            # Don't crash if flush fails, just log it
-            pass
-
         with keyframes.lock:
             N_keyframes = len(keyframes)
             # dirty_idx = keyframes.get_dirty_idx()
@@ -236,11 +228,3 @@ class RerunLogger:
                     strips=line_strips, colors=(0, 255, 0), labels=("Factor Graph")
                 ),
             )
-
-        # Explicitly flush rerun data after logging all keyframes and edges
-        # This ensures data is sent immediately, critical for daemon threads
-        try:
-            rr.flush(blocking=False)
-        except Exception as e:
-            # Don't crash if flush fails
-            pass
