@@ -294,16 +294,23 @@ class SLAMSession:
             PoseEstimate
         """
         import lietorch
+        from mast3r_slam.lietorch_utils import as_SE3
 
-        # Get transformation (world to camera)
-        T_WC = frame.T_WC
+        # Get transformation (world to camera) - T_WC is Sim3
+        T_WC_sim3 = frame.T_WC
 
-        # Extract translation
-        translation = T_WC.translation().cpu().numpy()[0]  # (3,)
+        # Convert Sim3 to SE3 (removes scale component)
+        T_WC_se3 = as_SE3(T_WC_sim3.cpu())
+
+        # Get 4x4 transformation matrix
+        mat4x4 = T_WC_se3.matrix().numpy()[0]  # (4, 4)
+
+        # Extract translation (x, y, z)
+        translation = mat4x4[:3, 3]
         x, y, z = translation
 
         # Extract rotation matrix to get yaw
-        rotation = T_WC.rotation().matrix().cpu().numpy()[0]  # (3, 3)
+        rotation = mat4x4[:3, :3]  # (3, 3)
         yaw = math.atan2(rotation[1, 0], rotation[0, 0])
 
         pose = PoseEstimate(
