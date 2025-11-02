@@ -146,6 +146,11 @@ class RerunLogger:
                 0
             ]  # Extract the first batch element
 
+            # Convert from OpenCV to OpenGL convention (same as current_camera)
+            mat4x4 = conventions.convert_pose(
+                mat4x4, src_convention=conventions.CC.CV, dst_convention=conventions.CC.GL
+            )
+
             # Extract rotation (3x3) and translation (1x3) from the 4x4 transformation matrix
             rotation_matrix: Float32[np.ndarray, "3 3"] = mat4x4[
                 :3, :3
@@ -200,7 +205,7 @@ class RerunLogger:
                     principal_point=pp.numpy(),
                     height=H,
                     width=W,
-                    camera_xyz=rr.ViewCoordinates.RDF,
+                    camera_xyz=rr.ViewCoordinates.RUB,  # OpenGL convention (same as current_camera)
                     image_plane_distance=self.image_plane_distance,
                 ),
             )
