@@ -90,6 +90,12 @@ class RerunLogger:
             :3, 3
         ]  # Right column, first 3 elements
 
+        # Debug: Log camera pose and orientation
+        import math
+        yaw = math.atan2(rotation_matrix[1, 0], rotation_matrix[0, 0])
+        print(f"[RerunLogger] Frame {current_frame.frame_id}: pos=({translation_vector[0]:.4f}, {translation_vector[1]:.4f}, {translation_vector[2]:.4f}), yaw={yaw:.4f} rad ({math.degrees(yaw):.1f}°)")
+        print(f"[RerunLogger] Frame {current_frame.frame_id}: rotation_matrix[0,0]={rotation_matrix[0,0]:.4f}, rotation_matrix[1,0]={rotation_matrix[1,0]:.4f}")
+
         cam_log_path = self.parent_log_path / "current_camera"
         rr.log(
             f"{cam_log_path}",

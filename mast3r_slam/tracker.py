@@ -109,9 +109,14 @@ class FrameTracker:
 
         new_kf = min(match_frac_k, unique_frac_f) < self.cfg["match_frac_thresh"]
 
+        # Debug: Log keyframe selection metrics
+        min_frac = min(match_frac_k, unique_frac_f)
+        print(f"[Tracker] Frame {frame.frame_id}: match_frac_k={match_frac_k:.3f}, unique_frac_f={unique_frac_f:.3f}, min={min_frac:.3f}, thresh={self.cfg['match_frac_thresh']:.3f}, new_kf={new_kf}")
+
         # Rest idx if new keyframe
         if new_kf:
             self.reset_idx_f2k()
+            print(f"[Tracker] ✓ Frame {frame.frame_id} promoted to KEYFRAME")
 
         return (
             new_kf,

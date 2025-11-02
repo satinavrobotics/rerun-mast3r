@@ -339,6 +339,12 @@ class SLAMSession:
         rotation = mat4x4[:3, :3]  # (3, 3)
         yaw = math.atan2(rotation[1, 0], rotation[0, 0])
 
+        # Debug: Log T_WC transformation details
+        print(f"[SLAM Session {self.session_id}] Frame {frame.frame_id} T_WC debug:")
+        print(f"  - Translation: ({x:.4f}, {y:.4f}, {z:.4f})")
+        print(f"  - Rotation[0,0]={rotation[0,0]:.4f}, Rotation[1,0]={rotation[1,0]:.4f}")
+        print(f"  - Yaw: {yaw:.4f} rad ({math.degrees(yaw):.1f}°)")
+
         pose = PoseEstimate(
             frame_id=frame.frame_id,
             position=(float(x), float(y)),

@@ -167,6 +167,11 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
             i, img, T_WC, img_size=dataset.img_size, device=device
         )
 
+        # Set intrinsics K on the frame if using calibrated mode
+        if config["use_calib"] and K is not None:
+            frame.K = K
+            print(f"[Inference] Frame {i}: Set K matrix on frame (use_calib=True)")
+
         if mode == Mode.INIT:
             # Initialize via mono inference, and encoded features needed for database
             X_init, C_init = mast3r_inference_mono(model, frame)
