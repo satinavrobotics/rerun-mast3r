@@ -38,9 +38,6 @@ import tyro
 # Disable rerun spawn unless explicitly allowed
 os.environ.setdefault("RERUN_SPAWN", "false")
 
-# Add official MASt3R-SLAM to path for importing reconstruction functions
-sys.path.insert(0, '/workspace/MASt3R-SLAM')
-
 def main():
     # Import here to avoid import errors when loading as FastAPI app
     from mast3r_slam.api.inference import InferenceConfig, mast3r_slam_inference
@@ -54,6 +51,8 @@ def main():
     if cfg.full_slam and keyframes is not None:
         print(f"\n[Full SLAM] Building global reconstruction with conf_thresh={cfg.conf_thresh}...")
 
+        # Add official MASt3R-SLAM to path for importing reconstruction functions
+        sys.path.insert(0, '/workspace/MASt3R-SLAM')
         # Import official save_reconstruction and save_ply from MASt3R-SLAM
         from mast3r_slam.evaluate import save_reconstruction, save_ply
 

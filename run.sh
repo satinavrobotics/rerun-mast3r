@@ -13,4 +13,7 @@ python /workspace/rerun_mast3r/sati_master_slam.py \
   --img-size 512 \
   --all-frames \
   --rr-config.headless \
-  --rerun-server-addr master_slam_cli:9878
+  --rerun-server-addr master_slam_cli:9878 \
+  --full-slam \
+  --conf-thresh 1.5
+  
