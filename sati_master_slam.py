@@ -51,16 +51,14 @@ def main():
     if cfg.full_slam and keyframes is not None:
         print(f"\n[Full SLAM] Building global reconstruction with conf_thresh={cfg.conf_thresh}...")
 
-        # Add official MASt3R-SLAM to path for importing reconstruction functions
-        sys.path.insert(0, '/workspace/MASt3R-SLAM')
-        # Import official save_reconstruction and save_ply from MASt3R-SLAM
-        from mast3r_slam.evaluate import save_reconstruction, save_ply
+        # Import save_reconstruction_ply from local evaluate.py
+        from mast3r_slam.evaluate import save_reconstruction_ply
 
         save_dir = Path("logs") / cfg.save_as
         seq = Path(cfg.dataset).stem
 
         # Save global fused pointcloud to PLY file
-        save_reconstruction(
+        save_reconstruction_ply(
             savedir=save_dir,
             filename=f"{seq}.ply",
             keyframes=keyframes,

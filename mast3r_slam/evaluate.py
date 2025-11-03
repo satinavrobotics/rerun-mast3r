@@ -44,10 +44,12 @@ def save_ATE(
             f.write(f"{t} {x} {y} {z} {qx} {qy} {qz} {qw}\n")
 
 
-def save_reconstruction(savedir, filename, timestamps, keyframes: SharedKeyframes):
+def save_reconstruction_ply(savedir, filename, keyframes: SharedKeyframes, c_conf_threshold):
+    """Save global fused pointcloud to .ply file (official MASt3R-SLAM version adapted for SharedKeyframes)"""
     savedir = pathlib.Path(savedir)
     savedir.mkdir(exist_ok=True, parents=True)
-    reconstruction = {}
+    pointclouds = []
+    colors = []
     for i in range(len(keyframes)):
         keyframe = keyframes[i]
         if config["use_calib"]:
@@ -55,17 +57,22 @@ def save_reconstruction(savedir, filename, timestamps, keyframes: SharedKeyframe
                 keyframe.img_shape.flatten()[:2], keyframe.X_canon[None], keyframe.K
             )
             keyframe.X_canon = X_canon.squeeze(0)
+        # Transform to world frame using T_WC
+        pW = keyframe.T_WC.act(keyframe.X_canon).cpu().numpy().reshape(-1, 3)
+        color = (keyframe.uimg.cpu().numpy() * 255).astype(np.uint8).reshape(-1, 3)
+        # Filter by confidence threshold
+        valid = (
+            keyframe.get_average_conf().cpu().numpy().astype(np.float32).reshape(-1)
+            > c_conf_threshold
+        )
+        pointclouds.append(pW[valid])
+        colors.append(color[valid])
 
-        t = timestamps[keyframe.frame_id]
-        reconstruction[i] = {
-            "frame_id": i,
-            "timestamp": t,
-            "T_WC": keyframe.T_WC.cpu(),
-            "X": keyframe.X_canon.cpu(),
-            "X_canon": keyframe.X_canon.cpu(),
-            "C": keyframe.C.cpu(),
-        }
-    torch.save(reconstruction, savedir / filename)
+    # Concatenate all keyframes into one global pointcloud
+    pointclouds = np.concatenate(pointclouds, axis=0)
+    colors = np.concatenate(colors, axis=0)
+
+    save_ply(savedir / filename, pointclouds, colors)
 
 
 def save_keyframes(savedir, timestamps, keyframes: SharedKeyframes):

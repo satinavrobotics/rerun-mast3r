@@ -184,6 +184,10 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
             states.set_frame(frame)
             rr_logger.log_frame(frame, keyframes, states)
 
+            # Full SLAM: Log global map after initial keyframe
+            if inf_config.full_slam and not inf_config.no_viz:
+                rr_logger.log_global_map(keyframes, conf_thresh=inf_config.conf_thresh)
+
             # Collect all frames if --all-frames flag is set
             if inf_config.all_frames:
                 all_frames.append(frame)
@@ -224,6 +228,10 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
 
         ## rerun log stuff
         rr_logger.log_frame(frame, keyframes, states)
+
+        # Full SLAM: Log global map after each new keyframe
+        if add_new_kf and inf_config.full_slam and not inf_config.no_viz:
+            rr_logger.log_global_map(keyframes, conf_thresh=inf_config.conf_thresh)
 
         # Collect all frames if --all-frames flag is set
         if inf_config.all_frames:
