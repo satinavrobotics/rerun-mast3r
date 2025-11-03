@@ -247,7 +247,7 @@ class RerunLogger:
                 ),
             )
 
-    def log_global_map(self, keyframes: SharedKeyframes, conf_thresh: float = 1.5):
+    def log_global_map(self, keyframes: SharedKeyframes, conf_thresh: float = 0.0):
         """
         Log fused global pointcloud to Rerun viewer.
 
@@ -273,11 +273,20 @@ class RerunLogger:
             rgb_img: Float32[torch.Tensor, "H W 3"] = keyframe.uimg
             color: UInt8[np.ndarray, "num_points 3"] = (rgb_img.cpu().numpy() * 255).astype(np.uint8).reshape(-1, 3)
 
-            # Filter by confidence threshold
-            valid = (
-                keyframe.get_average_conf().cpu().numpy().astype(np.float32).reshape(-1)
-                > conf_thresh
-            )
+            # Filter by confidence threshold (use C_conf=0.0 like in config, not Q_conf=1.5)
+            # Use raw confidence C, not averaged (get_average_conf can be None for first frame)
+            if keyframe.C is not None:
+                avg_conf = keyframe.get_average_conf()
+                if avg_conf is not None:
+                    valid = (
+                        avg_conf.cpu().numpy().astype(np.float32).reshape(-1)
+                        > conf_thresh
+                    )
+                else:
+                    # First frame has N=0, so get_average_conf returns None - use all points
+                    valid = np.ones(pW.shape[0], dtype=bool)
+            else:
+                valid = np.ones(pW.shape[0], dtype=bool)
 
             pcd_positions.append(pW[valid])
             pcd_colors.append(color[valid])
