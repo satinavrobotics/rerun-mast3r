@@ -265,36 +265,22 @@ class RerunLogger:
 
         for i in range(len(keyframes)):
             keyframe = keyframes[i]
+
+            # Transform to world frame using T_WC.act() (same as save_reconstruction_ply)
+            pW = keyframe.T_WC.act(keyframe.X_canon).cpu().numpy().reshape(-1, 3)
+
+            # Get colors
             rgb_img: Float32[torch.Tensor, "H W 3"] = keyframe.uimg
-            rgb_img: UInt8[np.ndarray, "H W 3"] = (rgb_img * 255).cpu().numpy().astype(np.uint8)
+            color: UInt8[np.ndarray, "num_points 3"] = (rgb_img.cpu().numpy() * 255).astype(np.uint8).reshape(-1, 3)
 
-            # Get pose transformation matrix
-            se3_pose: lietorch.SE3 = as_SE3(keyframe.T_WC.cpu())
-            matb4x4: Float32[np.ndarray, "1 4 4"] = (
-                se3_pose.matrix().numpy().astype(dtype=np.float32)
+            # Filter by confidence threshold
+            valid = (
+                keyframe.get_average_conf().cpu().numpy().astype(np.float32).reshape(-1)
+                > conf_thresh
             )
-            mat4x4_cv: Float32[np.ndarray, "4 4"] = matb4x4[0]  # OpenCV convention
 
-            # Filter by confidence
-            mask = (keyframe.C.cpu().numpy() > conf_thresh).squeeze()
-
-            # Get positions and colors in camera frame
-            positions: Float32[np.ndarray, "num_points 3"] = keyframe.X_canon.cpu().numpy()
-            colors: UInt8[np.ndarray, "num_points 3"] = rgb_img.reshape(-1, 3)
-
-            masked_positions = positions[mask]
-            masked_colors = colors[mask]
-
-            # Transform to world frame (same logic as nerfstudio_utils.py)
-            # Convert to homogeneous coordinates (add 1 as 4th coordinate)
-            homogeneous = np.ones((masked_positions.shape[0], 4), dtype=np.float32)
-            homogeneous[:, :3] = masked_positions
-
-            # Apply transformation: p_world = T_world_cam @ p_cam
-            world_positions = (mat4x4_cv @ homogeneous.T).T[:, :3]
-
-            pcd_positions.append(world_positions)
-            pcd_colors.append(masked_colors)
+            pcd_positions.append(pW[valid])
+            pcd_colors.append(color[valid])
 
         # Concatenate all keyframes into ONE global map
         if len(pcd_positions) > 0:

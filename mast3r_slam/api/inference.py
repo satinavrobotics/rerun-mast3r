@@ -258,9 +258,7 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
             frames_to_save = keyframes
 
         eval.save_ATE(save_dir, f"{seq_name}.txt", dataset.timestamps, frames_to_save)
-        eval.save_reconstruction(
-            save_dir, f"{seq_name}.pt", dataset.timestamps, frames_to_save
-        )
+        # Note: Global PLY reconstruction is saved in sati_master_slam.py if --full-slam is set
         eval.save_keyframes(
             save_dir / "keyframes" / seq_name, dataset.timestamps, frames_to_save
         )
