@@ -30,9 +30,8 @@ def create_blueprints(parent_log_path: Path) -> rrb.Blueprint:
 
 
 class RerunLogger:
-    def __init__(self, parent_log_path: Path, log_per_keyframe_pointclouds: bool = True):
+    def __init__(self, parent_log_path: Path):
         self.parent_log_path: Path = parent_log_path
-        self.log_per_keyframe_pointclouds = log_per_keyframe_pointclouds
         # Create a 3x3 rotation matrix for 90-degree rotation around X-axis
         rr.log(f"{self.parent_log_path}", rr.ViewCoordinates.RDF, static=True)
         # this does not work and I don't know why
@@ -169,34 +168,10 @@ class RerunLogger:
                     f"{cam_log_path}/pinhole/image",
                     rr.Image(image=kf_img, color_model=rr.ColorModel.RGB).compress(),
                 )
-                # create a mask based on the confidence values
-                mask = keyframe.C.cpu().numpy() > self.conf_thresh
-
-                # Convert the mask from shape (h*w, 1) to shape (h*w,)
-                mask = (
-                    mask.squeeze()
-                )  # Remove the trailing dimension to get a 1D boolean array
-
-                # Now apply the mask to both positions and colors
-                positions: Float32[np.ndarray, "num_points 3"] = (
-                    keyframe.X_canon.cpu().numpy()
-                )
-                colors: UInt8[np.ndarray, "num_points 3"] = kf_img.reshape(-1, 3)
-
-                masked_positions = positions[
-                    mask
-                ]  # Now selects entire rows where mask is True
-                masked_colors = colors[mask]
-
-                # Only log per-keyframe pointclouds if enabled (disabled in full_slam mode)
-                if self.log_per_keyframe_pointclouds:
-                    rr.log(
-                        f"{cam_log_path}/pointcloud",
-                        rr.Points3D(
-                            positions=masked_positions,
-                            colors=masked_colors,
-                        ),
-                    )
+                # NOTE: Per-keyframe pointclouds are NOT logged here (unlike original OpenGL visualization)
+                # The original MASt3R-SLAM uses OpenGL shaders to render X_canon as textured meshes in camera frame
+                # In Rerun, we only log the global fused map (transformed to world frame) via log_global_map()
+                # Logging per-keyframe X_canon creates "flat layers" because they're depth maps in camera frame
                 self.keyframe_logged_list.append(kf_idx)
             rr.log(
                 f"{cam_log_path}",
@@ -253,58 +228,242 @@ class RerunLogger:
 
     def log_global_map(self, keyframes: SharedKeyframes, conf_thresh: float = 0.0):
         """
-        Log fused global pointcloud to Rerun viewer.
+        Log fused global reconstruction as meshes to Rerun viewer.
 
-        This method transforms all keyframe pointclouds from camera frame to world frame
-        and concatenates them into a single global map for visualization.
+        This replicates the original MASt3R-SLAM OpenGL visualization logic:
+        - Each keyframe's pointmap (X_canon in camera frame) is kept in camera frame
+        - Transformation to world frame happens via Rerun's Transform3D (like OpenGL's m_model matrix)
+        - Pointmap is triangulated by connecting neighboring pixels (like trianglemap.glsl)
+        - Confidence filtering is applied per-quad (like the shader)
 
         Args:
             keyframes: SharedKeyframes object containing all keyframes
-            conf_thresh: Confidence threshold for filtering points (default: 1.5)
+            conf_thresh: Confidence threshold for filtering points (default: 0.0)
         """
-        pcd_positions = []
-        pcd_colors = []
+        from mast3r_slam.config import config
+        from mast3r_slam.geometry import get_pixel_coords
 
-        print(f"[RerunLogger] Building global map from {len(keyframes)} keyframes with conf_thresh={conf_thresh}...")
+        print(f"[RerunLogger] Building global mesh from {len(keyframes)} keyframes with conf_thresh={conf_thresh}...")
+
+        total_vertices = 0
+        total_triangles = 0
 
         for i in range(len(keyframes)):
             keyframe = keyframes[i]
 
-            # Transform to world frame using T_WC.act() (same as save_reconstruction_ply)
-            pW = keyframe.T_WC.act(keyframe.X_canon).cpu().numpy().reshape(-1, 3)
+            # Get image dimensions
+            h, w = keyframe.img_shape.flatten()[:2].cpu().numpy().astype(int)
 
-            # Get colors
-            rgb_img: Float32[torch.Tensor, "H W 3"] = keyframe.uimg
-            color: UInt8[np.ndarray, "num_points 3"] = (rgb_img.cpu().numpy() * 255).astype(np.uint8).reshape(-1, 3)
+            # Get pointmap in camera frame (same as frame_X() in visualization.py)
+            X_canon = self._frame_X(keyframe)
 
-            # Filter by confidence threshold (use C_conf=0.0 like in config, not Q_conf=1.5)
-            # Use raw confidence C, not averaged (get_average_conf can be None for first frame)
-            if keyframe.C is not None:
-                avg_conf = keyframe.get_average_conf()
-                if avg_conf is not None:
-                    valid = (
-                        avg_conf.cpu().numpy().astype(np.float32).reshape(-1)
-                        > conf_thresh
-                    )
-                else:
-                    # First frame has N=0, so get_average_conf returns None - use all points
-                    valid = np.ones(pW.shape[0], dtype=bool)
+            # Reshape to H×W×3 grid (camera frame)
+            X_grid = X_canon.reshape(h, w, 3)
+
+            # Get colors (H×W×3)
+            colors = (keyframe.uimg.cpu().numpy() * 255).astype(np.uint8).reshape(h, w, 3)
+
+            # Get confidence (H×W)
+            avg_conf = keyframe.get_average_conf()
+            if avg_conf is not None:
+                conf_grid = avg_conf.cpu().numpy().astype(np.float32).reshape(h, w)
             else:
-                valid = np.ones(pW.shape[0], dtype=bool)
+                conf_grid = np.ones((h, w), dtype=np.float32)
 
-            pcd_positions.append(pW[valid])
-            pcd_colors.append(color[valid])
-
-        # Concatenate all keyframes into ONE global map
-        if len(pcd_positions) > 0:
-            global_points = np.concatenate(pcd_positions, axis=0)
-            global_colors = np.concatenate(pcd_colors, axis=0)
-
-            # Log as single entity
-            rr.log(
-                f"{self.parent_log_path}/global_map",
-                rr.Points3D(positions=global_points, colors=global_colors)
+            # Create mesh by triangulating the grid (similar to trianglemap.glsl)
+            # Points are in CAMERA FRAME, will be transformed to world via Transform3D
+            vertices, vertex_colors, triangles = self._create_mesh_from_pointmap(
+                X_grid, colors, conf_grid, conf_thresh
             )
-            print(f"[RerunLogger] ✓ Logged global map: {len(global_points):,} points from {len(keyframes)} keyframes")
+
+            if len(vertices) > 0:
+                # Log camera pose transformation (like m_model in OpenGL shader)
+                cam_log_path = f"{self.parent_log_path}/global_map/keyframe_{i}"
+
+                # Transform from camera frame to world frame using T_WC
+                se3_pose = as_SE3(keyframe.T_WC.cpu())
+                mat4x4_cv = se3_pose.matrix().numpy().astype(np.float32)[0]
+
+                # Convert from OpenCV (RDF) to OpenGL (RUB) convention (same as keyframe logging)
+                mat4x4_gl = conventions.convert_pose(
+                    mat4x4_cv, src_convention=conventions.CC.CV, dst_convention=conventions.CC.GL
+                )
+
+                # Extract rotation (3x3) and translation (3,) from 4x4 matrix
+                rotation_matrix = mat4x4_gl[:3, :3]
+                translation_vector = mat4x4_gl[:3, 3]
+
+                rr.log(
+                    cam_log_path,
+                    rr.Transform3D(translation=translation_vector, mat3x3=rotation_matrix)
+                )
+
+                # Log mesh in camera frame (will be transformed by parent Transform3D)
+                rr.log(
+                    f"{cam_log_path}/mesh",
+                    rr.Mesh3D(
+                        vertex_positions=vertices,
+                        vertex_colors=vertex_colors,
+                        indices=triangles,
+                    )
+                )
+                total_vertices += len(vertices)
+                total_triangles += len(triangles)
+
+        if total_vertices > 0:
+            print(f"[RerunLogger] ✓ Logged global mesh: {total_vertices:,} vertices, {total_triangles:,} triangles from {len(keyframes)} keyframes")
         else:
-            print(f"[RerunLogger] ✗ No points to log (all filtered out by conf_thresh={conf_thresh})")
+            print(f"[RerunLogger] ✗ No mesh to log (all filtered out by conf_thresh={conf_thresh})")
+
+    def _frame_X(self, frame):
+        """
+        Get pointmap in camera frame, applying calibration constraint if enabled.
+        This replicates the frame_X() method from visualization.py lines 358-380.
+
+        Args:
+            frame: Keyframe object
+
+        Returns:
+            X: (H*W, 3) array of 3D points in camera frame
+        """
+        from mast3r_slam.config import config
+        from mast3r_slam.geometry import get_pixel_coords
+
+        if config["use_calib"]:
+            # Constrain points to camera rays (depth * ray_direction)
+            Xs = frame.X_canon[None]
+            img_size = frame.img_shape.flatten()[:2]
+            K = frame.K
+
+            # Get pixel coordinates
+            p = get_pixel_coords(
+                Xs.shape[0], img_size, device=Xs.device, dtype=Xs.dtype
+            ).view(*Xs.shape[:-1], 2)
+
+            # Compute ray directions from camera center
+            tmp1 = (p[..., 0] - K[0, 2]) / K[0, 0]
+            tmp2 = (p[..., 1] - K[1, 2]) / K[1, 1]
+            dP_dz = torch.empty(
+                p.shape[:-1] + (3, 1), device=Xs.device, dtype=Xs.dtype
+            )
+            dP_dz[..., 0, 0] = tmp1
+            dP_dz[..., 1, 0] = tmp2
+            dP_dz[..., 2, 0] = 1.0
+            dP_dz = dP_dz[..., 0]
+
+            # Constrain to rays: depth * ray_direction
+            X = (Xs[..., 2:3] * dP_dz)[0].cpu().numpy().astype(np.float32)
+            return X
+
+        return frame.X_canon.cpu().numpy().astype(np.float32)
+
+    def _create_mesh_from_pointmap(self, points, colors, conf, conf_thresh, slant_thresh=0.1):
+        """
+        Create a triangle mesh from a H×W pointmap by connecting neighboring points.
+        This replicates the trianglemap.glsl shader logic (lines 41-93).
+
+        The shader creates quads (2 triangles) for each pixel, filtering by:
+        1. Border pixels (10 pixel margin)
+        2. Confidence threshold (all 4 corners must pass)
+        3. Slant threshold (surface angle relative to camera ray)
+
+        Args:
+            points: (H, W, 3) array of 3D positions in camera frame
+            colors: (H, W, 3) array of RGB colors
+            conf: (H, W) array of confidence values
+            conf_thresh: confidence threshold for filtering
+            slant_thresh: slant threshold for filtering grazing angles (default: 0.1)
+
+        Returns:
+            vertices: (N, 3) array of vertex positions
+            vertex_colors: (N, 3) array of vertex colors
+            triangles: (M, 3) array of triangle indices
+        """
+        h, w = points.shape[:2]
+
+        # Border margin (line 44 in trianglemap.glsl)
+        border = 10
+
+        # Create vertex list and index mapping
+        vertex_map = np.full((h, w), -1, dtype=np.int32)
+        vertices_list = []
+        colors_list = []
+
+        # First pass: collect all vertices that might be used
+        for y in range(border, h - border):
+            for x in range(border, w - border):
+                if vertex_map[y, x] == -1:
+                    vertex_map[y, x] = len(vertices_list)
+                    vertices_list.append(points[y, x])
+                    colors_list.append(colors[y, x])
+
+        if len(vertices_list) == 0:
+            return np.array([]), np.array([]), np.array([])
+
+        # Second pass: create triangles (quads) with confidence filtering
+        triangles = []
+        for y in range(border, h - border - 1):
+            for x in range(border, w - border - 1):
+                # Get indices of 4 neighboring points: TL, TR, BL, BR (line 50-51)
+                tl = vertex_map[y, x]
+                tr = vertex_map[y, x + 1]
+                bl = vertex_map[y + 1, x]
+                br = vertex_map[y + 1, x + 1]
+
+                # Check if all 4 vertices exist
+                if tl < 0 or tr < 0 or bl < 0 or br < 0:
+                    continue
+
+                # Confidence filtering: only check top-left corner (line 57 + 75-78 in trianglemap.glsl)
+                # The shader fetches conf from (x,y) for all 4 pixels, so it only checks TL confidence
+                if conf[y, x] <= conf_thresh:
+                    continue
+
+                # Slant threshold filtering (line 60-70 in trianglemap.glsl)
+                # Compute surface normals for the 2 triangles
+                p_tl = points[y, x]
+                p_tr = points[y, x + 1]
+                p_bl = points[y + 1, x]
+                p_br = points[y + 1, x + 1]
+
+                # Normal for triangle 1 (TL, BL, TR)
+                n1 = np.cross(p_bl - p_tl, p_tr - p_tl)
+                n1_norm = np.linalg.norm(n1)
+                if n1_norm > 1e-8:
+                    n1 = n1 / n1_norm
+                else:
+                    continue  # Degenerate triangle
+
+                # Normal for triangle 2 (TR, BL, BR)
+                n2 = np.cross(p_bl - p_tr, p_br - p_tr)
+                n2_norm = np.linalg.norm(n2)
+                if n2_norm > 1e-8:
+                    n2 = n2 / n2_norm
+                else:
+                    continue  # Degenerate triangle
+
+                # Ray directions from camera (normalized positions in camera frame)
+                ray1 = p_tl / (np.linalg.norm(p_tl) + 1e-8)
+                ray2 = p_tr / (np.linalg.norm(p_tr) + 1e-8)
+
+                # Check if surface is too slanted (grazing angle)
+                # abs(dot(normal, ray)) < threshold means surface is nearly parallel to viewing direction
+                if abs(np.dot(n1, ray1)) < slant_thresh:
+                    continue
+                if abs(np.dot(n2, ray2)) < slant_thresh:
+                    continue
+
+                # Create 2 triangles in CCW order (line 82-92)
+                # Triangle 1: TL, BL, TR
+                # Triangle 2: TR, BL, BR
+                triangles.append([tl, bl, tr])
+                triangles.append([tr, bl, br])
+
+        if len(triangles) == 0:
+            return np.array(vertices_list, dtype=np.float32), np.array(colors_list, dtype=np.uint8), np.array([])
+
+        vertices = np.array(vertices_list, dtype=np.float32)
+        vertex_colors = np.array(colors_list, dtype=np.uint8)
+        triangles = np.array(triangles, dtype=np.uint32)
+
+        return vertices, vertex_colors, triangles

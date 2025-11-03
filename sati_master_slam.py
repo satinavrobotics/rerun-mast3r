@@ -71,8 +71,7 @@ def main():
             import rerun as rr
             from mast3r_slam.rerun_log_utils import RerunLogger
 
-            # Disable per-keyframe pointclouds (only show global fused map)
-            rr_logger = RerunLogger(parent_log_path=Path("/world"), log_per_keyframe_pointclouds=False)
+            rr_logger = RerunLogger(parent_log_path=Path("/world"))
             rr_logger.log_global_map(keyframes, conf_thresh=cfg.conf_thresh)
             print(f"[Full SLAM] ✓ Logged global map to Rerun viewer")
 

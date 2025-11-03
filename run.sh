@@ -7,7 +7,7 @@ conda activate mast3r-slam
 
 # CLI usage example:
 python /workspace/rerun_mast3r/sati_master_slam.py \
-  --dataset /workspace/dataset/rgb_no23vcF_69_0 \
+  --dataset /workspace/dataset/rgb_no1vcF_17_0 \
   --config /workspace/rerun_mast3r/config/calib.yaml \
   --save-as stanford_out \
   --img-size 512 \
@@ -15,5 +15,5 @@ python /workspace/rerun_mast3r/sati_master_slam.py \
   --rr-config.headless \
   --rerun-server-addr master_slam_cli:9878 \
   --full-slam \
-  --conf-thresh 1.5
+  --conf-thresh 0.0
   
