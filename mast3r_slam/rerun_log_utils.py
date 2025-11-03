@@ -260,6 +260,12 @@ class RerunLogger:
             # Reshape to H×W×3 grid (camera frame)
             X_grid = X_canon.reshape(h, w, 3)
 
+            # Convert points from OpenCV (RDF) to OpenGL (RUB) convention
+            # RDF: Right=+X, Down=+Y, Forward=+Z
+            # RUB: Right=+X, Up=+Y, Back=+Z
+            # Conversion: flip Y and Z
+            X_grid = X_grid * np.array([1, -1, -1], dtype=np.float32)
+
             # Get colors (H×W×3)
             colors = (keyframe.uimg.cpu().numpy() * 255).astype(np.uint8).reshape(h, w, 3)
 
