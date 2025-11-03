@@ -46,7 +46,7 @@ class RerunLogger:
         self.path_list = []
         self.keyframe_logged_list = []
         self.num_keyframes_logged = 0
-        self.conf_thresh = 7
+        self.conf_thresh = 1.5  # Lowered from 7 to 1.5 for denser pointclouds
         self.image_plane_distance = 0.2
 
     def log_frame(
@@ -246,3 +246,66 @@ class RerunLogger:
                     strips=line_strips, colors=(0, 255, 0), labels=("Factor Graph")
                 ),
             )
+
+    def log_global_map(self, keyframes: SharedKeyframes, conf_thresh: float = 1.5):
+        """
+        Log fused global pointcloud to Rerun viewer.
+
+        This method transforms all keyframe pointclouds from camera frame to world frame
+        and concatenates them into a single global map for visualization.
+
+        Args:
+            keyframes: SharedKeyframes object containing all keyframes
+            conf_thresh: Confidence threshold for filtering points (default: 1.5)
+        """
+        pcd_positions = []
+        pcd_colors = []
+
+        print(f"[RerunLogger] Building global map from {len(keyframes)} keyframes with conf_thresh={conf_thresh}...")
+
+        for i in range(len(keyframes)):
+            keyframe = keyframes[i]
+            rgb_img: Float32[torch.Tensor, "H W 3"] = keyframe.uimg
+            rgb_img: UInt8[np.ndarray, "H W 3"] = (rgb_img * 255).cpu().numpy().astype(np.uint8)
+
+            # Get pose transformation matrix
+            se3_pose: lietorch.SE3 = as_SE3(keyframe.T_WC.cpu())
+            matb4x4: Float32[np.ndarray, "1 4 4"] = (
+                se3_pose.matrix().numpy().astype(dtype=np.float32)
+            )
+            mat4x4_cv: Float32[np.ndarray, "4 4"] = matb4x4[0]  # OpenCV convention
+
+            # Filter by confidence
+            mask = (keyframe.C.cpu().numpy() > conf_thresh).squeeze()
+
+            # Get positions and colors in camera frame
+            positions: Float32[np.ndarray, "num_points 3"] = keyframe.X_canon.cpu().numpy()
+            colors: UInt8[np.ndarray, "num_points 3"] = rgb_img.reshape(-1, 3)
+
+            masked_positions = positions[mask]
+            masked_colors = colors[mask]
+
+            # Transform to world frame (same logic as nerfstudio_utils.py)
+            # Convert to homogeneous coordinates (add 1 as 4th coordinate)
+            homogeneous = np.ones((masked_positions.shape[0], 4), dtype=np.float32)
+            homogeneous[:, :3] = masked_positions
+
+            # Apply transformation: p_world = T_world_cam @ p_cam
+            world_positions = (mat4x4_cv @ homogeneous.T).T[:, :3]
+
+            pcd_positions.append(world_positions)
+            pcd_colors.append(masked_colors)
+
+        # Concatenate all keyframes into ONE global map
+        if len(pcd_positions) > 0:
+            global_points = np.concatenate(pcd_positions, axis=0)
+            global_colors = np.concatenate(pcd_colors, axis=0)
+
+            # Log as single entity
+            rr.log(
+                f"{self.parent_log_path}/global_map",
+                rr.Points3D(positions=global_points, colors=global_colors)
+            )
+            print(f"[RerunLogger] ✓ Logged global map: {len(global_points):,} points from {len(keyframes)} keyframes")
+        else:
+            print(f"[RerunLogger] ✗ No points to log (all filtered out by conf_thresh={conf_thresh})")

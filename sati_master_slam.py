@@ -6,6 +6,7 @@ Wrapper for the Rerun-enabled MASt3R-SLAM entry point.
      --dataset, --config, --save-as, --img-size, --no-viz, [--calib]
 2) Calls mast3r_slam_inference(...) under the hood
 3) Reads the resulting trajectory .txt and dumps your JSON
+4) If --full-slam flag is set, builds and exports global fused pointcloud
 """
 
 # Patch numpy.asarray to support 'copy' parameter for numpy < 2.0
@@ -30,20 +31,54 @@ def _patched_asarray(a, dtype=None, order=None, *, like=None, copy=None):
         return _orig_asarray(a, **kwargs)
 _np.asarray = _patched_asarray
 
-import os, json, math
+import os, json, math, sys
 from pathlib import Path
 import tyro
 
 # Disable rerun spawn unless explicitly allowed
 os.environ.setdefault("RERUN_SPAWN", "false")
 
+# Add official MASt3R-SLAM to path for importing reconstruction functions
+sys.path.insert(0, '/workspace/MASt3R-SLAM')
+
 def main():
     # Import here to avoid import errors when loading as FastAPI app
     from mast3r_slam.api.inference import InferenceConfig, mast3r_slam_inference
 
     cfg = tyro.cli(InferenceConfig)
-    mast3r_slam_inference(cfg)
 
+    # Run SLAM inference
+    keyframes = mast3r_slam_inference(cfg)
+
+    # Full SLAM: Build and export global fused pointcloud
+    if cfg.full_slam and keyframes is not None:
+        print(f"\n[Full SLAM] Building global reconstruction with conf_thresh={cfg.conf_thresh}...")
+
+        # Import official save_reconstruction and save_ply from MASt3R-SLAM
+        from mast3r_slam.evaluate import save_reconstruction, save_ply
+
+        save_dir = Path("logs") / cfg.save_as
+        seq = Path(cfg.dataset).stem
+
+        # Save global fused pointcloud to PLY file
+        save_reconstruction(
+            savedir=save_dir,
+            filename=f"{seq}.ply",
+            keyframes=keyframes,
+            c_conf_threshold=cfg.conf_thresh
+        )
+        print(f"[Full SLAM] ✓ Saved global reconstruction to {save_dir}/{seq}.ply")
+
+        # Log global map to Rerun viewer (if visualization is enabled)
+        if not cfg.no_viz and cfg.rerun_server_addr:
+            import rerun as rr
+            from mast3r_slam.rerun_log_utils import RerunLogger
+
+            rr_logger = RerunLogger(parent_log_path=Path("/world"))
+            rr_logger.log_global_map(keyframes, conf_thresh=cfg.conf_thresh)
+            print(f"[Full SLAM] ✓ Logged global map to Rerun viewer")
+
+    # Read trajectory and export to JSON
     seq = Path(cfg.dataset).stem
     traj = Path("logs") / cfg.save_as / f"{seq}.txt"
     if not traj.exists():

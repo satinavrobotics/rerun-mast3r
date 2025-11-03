@@ -53,6 +53,8 @@ class InferenceConfig:
     all_frames: bool = False  # Save poses for all frames, not just keyframes
     rerun_server_addr: str | None = None  # Optional rerun server address (e.g., "master_slam_cli:9878")
     real_time: bool = False  # Real-time mode: output pose after each frame instead of at the end
+    full_slam: bool = False  # Full SLAM mode: build and export global fused pointcloud (dense reconstruction)
+    conf_thresh: float = 1.5  # Confidence threshold for pointcloud filtering in full SLAM mode
 
 
 def mast3r_slam_inference(inf_config: InferenceConfig):
@@ -290,6 +292,9 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
                 time.sleep(1)
         except KeyboardInterrupt:
             print("\nShutting down rerun server...")
+
+    # Return keyframes for full SLAM processing
+    return keyframes
 
 
 def relocalization(frame, keyframes, factor_graph, retrieval_database):
