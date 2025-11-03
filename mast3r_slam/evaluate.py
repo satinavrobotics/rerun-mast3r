@@ -8,6 +8,7 @@ from mast3r_slam.frame import SharedKeyframes
 from mast3r_slam.lietorch_utils import as_SE3
 from mast3r_slam.config import config
 from mast3r_slam.geometry import constrain_points_to_ray
+from plyfile import PlyData, PlyElement
 
 
 def prepare_savedir(args, dataset):
@@ -80,3 +81,23 @@ def save_keyframes(savedir, timestamps, keyframes: SharedKeyframes):
                 (keyframe.uimg.cpu().numpy() * 255).astype(np.uint8), cv2.COLOR_RGB2BGR
             ),
         )
+
+def save_ply(filename, points, colors):
+    colors = colors.astype(np.uint8)
+    # Combine XYZ and RGB into a structured array
+    pcd = np.empty(
+        len(points),
+        dtype=[
+            ("x", "f4"),
+            ("y", "f4"),
+            ("z", "f4"),
+            ("red", "u1"),
+            ("green", "u1"),
+            ("blue", "u1"),
+        ],
+    )
+    pcd["x"], pcd["y"], pcd["z"] = points.T
+    pcd["red"], pcd["green"], pcd["blue"] = colors.T
+    vertex_element = PlyElement.describe(pcd, "vertex")
+    ply_data = PlyData([vertex_element], text=False)
+    ply_data.write(filename)
