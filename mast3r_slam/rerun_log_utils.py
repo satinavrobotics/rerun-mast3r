@@ -304,7 +304,7 @@ class RerunLogger:
                     rr.Mesh3D(
                         vertex_positions=vertices,
                         vertex_colors=vertex_colors,
-                        indices=triangles,
+                        triangle_indices=triangles,
                     )
                 )
                 total_vertices += len(vertices)
