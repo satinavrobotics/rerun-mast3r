@@ -81,7 +81,8 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
         print(f"[SLAM Inference] ✓ Connected with flush_timeout_sec=0.1 (auto-flush enabled)")
 
     parent_log_path = Path("/world")
-    rr_logger = RerunLogger(parent_log_path)
+    # Disable per-keyframe pointclouds in full_slam mode (only show global fused map)
+    rr_logger = RerunLogger(parent_log_path, log_per_keyframe_pointclouds=not inf_config.full_slam)
     # create a blueprint
     blueprint: rrb.Blueprint = create_blueprints(parent_log_path)
     rr.send_blueprint(blueprint)

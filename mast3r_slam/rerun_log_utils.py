@@ -30,8 +30,9 @@ def create_blueprints(parent_log_path: Path) -> rrb.Blueprint:
 
 
 class RerunLogger:
-    def __init__(self, parent_log_path: Path):
+    def __init__(self, parent_log_path: Path, log_per_keyframe_pointclouds: bool = True):
         self.parent_log_path: Path = parent_log_path
+        self.log_per_keyframe_pointclouds = log_per_keyframe_pointclouds
         # Create a 3x3 rotation matrix for 90-degree rotation around X-axis
         rr.log(f"{self.parent_log_path}", rr.ViewCoordinates.RDF, static=True)
         # this does not work and I don't know why
@@ -186,13 +187,16 @@ class RerunLogger:
                     mask
                 ]  # Now selects entire rows where mask is True
                 masked_colors = colors[mask]
-                rr.log(
-                    f"{cam_log_path}/pointcloud",
-                    rr.Points3D(
-                        positions=masked_positions,
-                        colors=masked_colors,
-                    ),
-                )
+
+                # Only log per-keyframe pointclouds if enabled (disabled in full_slam mode)
+                if self.log_per_keyframe_pointclouds:
+                    rr.log(
+                        f"{cam_log_path}/pointcloud",
+                        rr.Points3D(
+                            positions=masked_positions,
+                            colors=masked_colors,
+                        ),
+                    )
                 self.keyframe_logged_list.append(kf_idx)
             rr.log(
                 f"{cam_log_path}",
