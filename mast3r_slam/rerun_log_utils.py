@@ -30,8 +30,9 @@ def create_blueprints(parent_log_path: Path) -> rrb.Blueprint:
 
 
 class RerunLogger:
-    def __init__(self, parent_log_path: Path):
+    def __init__(self, parent_log_path: Path, log_pointclouds: bool = False):
         self.parent_log_path: Path = parent_log_path
+        self.log_pointclouds = log_pointclouds  # Only log pointclouds if --full-slam is enabled
         # Create a 3x3 rotation matrix for 90-degree rotation around X-axis
         rr.log(f"{self.parent_log_path}", rr.ViewCoordinates.RDF, static=True)
         # this does not work and I don't know why
@@ -175,26 +176,27 @@ class RerunLogger:
                     rr.Image(image=kf_img, color_model=rr.ColorModel.RGB).compress(),
                 )
 
-                # Log per-keyframe pointcloud (original rerun-master behavior)
-                # Create a mask based on the confidence values
-                mask = keyframe.C.cpu().numpy() > self.conf_thresh
+                # Log per-keyframe pointcloud only if --full-slam is enabled
+                if self.log_pointclouds:
+                    # Create a mask based on the confidence values
+                    mask = keyframe.C.cpu().numpy() > self.conf_thresh
 
-                # Convert the mask from shape (h*w, 1) to shape (h*w,)
-                mask = mask.squeeze()  # Remove the trailing dimension to get a 1D boolean array
+                    # Convert the mask from shape (h*w, 1) to shape (h*w,)
+                    mask = mask.squeeze()  # Remove the trailing dimension to get a 1D boolean array
 
-                # Now apply the mask to both positions and colors
-                positions: Float32[np.ndarray, "num_points 3"] = keyframe.X_canon.cpu().numpy()
-                colors: UInt8[np.ndarray, "num_points 3"] = kf_img.reshape(-1, 3)
+                    # Now apply the mask to both positions and colors
+                    positions: Float32[np.ndarray, "num_points 3"] = keyframe.X_canon.cpu().numpy()
+                    colors: UInt8[np.ndarray, "num_points 3"] = kf_img.reshape(-1, 3)
 
-                masked_positions = positions[mask]  # Now selects entire rows where mask is True
-                masked_colors = colors[mask]
-                rr.log(
-                    f"{cam_log_path}/pointcloud",
-                    rr.Points3D(
-                        positions=masked_positions,
-                        colors=masked_colors,
-                    ),
-                )
+                    masked_positions = positions[mask]  # Now selects entire rows where mask is True
+                    masked_colors = colors[mask]
+                    rr.log(
+                        f"{cam_log_path}/pointcloud",
+                        rr.Points3D(
+                            positions=masked_positions,
+                            colors=masked_colors,
+                        ),
+                    )
                 self.keyframe_logged_list.append(kf_idx)
             rr.log(
                 f"{cam_log_path}",

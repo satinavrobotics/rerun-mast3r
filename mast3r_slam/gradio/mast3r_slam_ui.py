@@ -106,7 +106,8 @@ def streaming_mast3r_slam_fn(*input_params, progress=gr.Progress()):
 
     ## rerun setup
     parent_log_path = Path("world")
-    rr_logger = RerunLogger(parent_log_path)
+    # Gradio demo always shows final pointcloud, so enable pointcloud logging
+    rr_logger = RerunLogger(parent_log_path, log_pointclouds=True)
     blueprint = create_blueprints(parent_log_path=parent_log_path)
     rr.send_blueprint(blueprint)
 
