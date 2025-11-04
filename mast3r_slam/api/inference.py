@@ -55,6 +55,7 @@ class InferenceConfig:
     real_time: bool = False  # Real-time mode: output pose after each frame instead of at the end
     full_slam: bool = False  # Full SLAM mode: build and export global fused pointcloud (dense reconstruction)
     conf_thresh: float = 0.0  # Confidence threshold for pointcloud filtering (C_conf from config)
+    custom_shaders: bool = False  # Custom shader mode: replicate OpenGL shader behavior with mesh-based reconstruction (experimental)
 
 
 def mast3r_slam_inference(inf_config: InferenceConfig):

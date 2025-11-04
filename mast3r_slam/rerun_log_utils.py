@@ -146,10 +146,8 @@ class RerunLogger:
                 0
             ]  # Extract the first batch element
 
-            # Convert from OpenCV to OpenGL convention (same as current_camera)
-            mat4x4 = conventions.convert_pose(
-                mat4x4, src_convention=conventions.CC.CV, dst_convention=conventions.CC.GL
-            )
+            # Keep in OpenCV (RDF) convention - no conversion needed
+            # World is RDF, points are in camera frame (RDF), so pose should also be RDF
 
             # Extract rotation (3x3) and translation (1x3) from the 4x4 transformation matrix
             rotation_matrix: Float32[np.ndarray, "3 3"] = mat4x4[
@@ -168,10 +166,27 @@ class RerunLogger:
                     f"{cam_log_path}/pinhole/image",
                     rr.Image(image=kf_img, color_model=rr.ColorModel.RGB).compress(),
                 )
-                # NOTE: Per-keyframe pointclouds are NOT logged here (unlike original OpenGL visualization)
-                # The original MASt3R-SLAM uses OpenGL shaders to render X_canon as textured meshes in camera frame
-                # In Rerun, we only log the global fused map (transformed to world frame) via log_global_map()
-                # Logging per-keyframe X_canon creates "flat layers" because they're depth maps in camera frame
+
+                # Log per-keyframe pointcloud (original rerun-master behavior)
+                # Create a mask based on the confidence values
+                mask = keyframe.C.cpu().numpy() > self.conf_thresh
+
+                # Convert the mask from shape (h*w, 1) to shape (h*w,)
+                mask = mask.squeeze()  # Remove the trailing dimension to get a 1D boolean array
+
+                # Now apply the mask to both positions and colors
+                positions: Float32[np.ndarray, "num_points 3"] = keyframe.X_canon.cpu().numpy()
+                colors: UInt8[np.ndarray, "num_points 3"] = kf_img.reshape(-1, 3)
+
+                masked_positions = positions[mask]  # Now selects entire rows where mask is True
+                masked_colors = colors[mask]
+                rr.log(
+                    f"{cam_log_path}/pointcloud",
+                    rr.Points3D(
+                        positions=masked_positions,
+                        colors=masked_colors,
+                    ),
+                )
                 self.keyframe_logged_list.append(kf_idx)
             rr.log(
                 f"{cam_log_path}",
@@ -184,7 +199,7 @@ class RerunLogger:
                     principal_point=pp.numpy(),
                     height=H,
                     width=W,
-                    camera_xyz=rr.ViewCoordinates.RUB,  # OpenGL convention (same as current_camera)
+                    camera_xyz=rr.ViewCoordinates.RDF,  # OpenCV convention (matches world coordinate system)
                     image_plane_distance=self.image_plane_distance,
                 ),
             )
@@ -228,11 +243,16 @@ class RerunLogger:
 
     def log_global_map(self, keyframes: SharedKeyframes, conf_thresh: float = 0.0):
         """
-        Log fused global reconstruction as meshes to Rerun viewer.
+        [CUSTOM SHADERS MODE - EXPERIMENTAL]
+        Log mesh-based global reconstruction to Rerun viewer.
 
-        This replicates the original MASt3R-SLAM OpenGL visualization logic:
-        - Each keyframe's pointmap (X_canon in camera frame) is kept in camera frame
+        This attempts to replicate the original MASt3R-SLAM OpenGL shader visualization:
+        - Each keyframe's pointmap (X_canon in camera frame) is triangulated into a mesh
         - Transformation to world frame happens via Rerun's Transform3D (like OpenGL's m_model matrix)
+
+        NOTE: This is experimental and only used when --custom_shaders flag is enabled.
+        The default behavior (--full-slam without --custom_shaders) uses per-keyframe pointclouds
+        during streaming and a final fused pointcloud at the end (original rerun-master approach).
         - Pointmap is triangulated by connecting neighboring pixels (like trianglemap.glsl)
         - Confidence filtering is applied per-quad (like the shader)
 
@@ -264,7 +284,7 @@ class RerunLogger:
             # RDF: Right=+X, Down=+Y, Forward=+Z
             # RUB: Right=+X, Up=+Y, Back=+Z
             # Conversion: flip Y and Z
-            X_grid = X_grid * np.array([1, -1, -1], dtype=np.float32)
+            # X_grid = X_grid * np.array([1, -1, -1], dtype=np.float32)
 
             # Get colors (H×W×3)
             colors = (keyframe.uimg.cpu().numpy() * 255).astype(np.uint8).reshape(h, w, 3)

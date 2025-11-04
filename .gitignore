@@ -180,3 +180,6 @@ logs
 checkpoints
 data/*
 output/*
+
+# legacy
+legacy/

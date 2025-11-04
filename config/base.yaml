@@ -64,5 +64,5 @@ retrieval:
   min_thresh: 5e-3
 
 reloc:
-  min_match_frac: 0.0
-  strict: False
+  min_match_frac: 0.3
+  strict: True

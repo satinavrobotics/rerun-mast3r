@@ -66,14 +66,37 @@ def main():
         )
         print(f"[Full SLAM] ✓ Saved global reconstruction to {save_dir}/{seq}.ply")
 
-        # Log global map to Rerun viewer (if visualization is enabled)
+        # Log final fused pointcloud to Rerun viewer (if visualization is enabled)
+        # This uses the original rerun-master approach: final pointcloud from nerfstudio export
+        if not cfg.no_viz and cfg.rerun_server_addr:
+            import rerun as rr
+            from mast3r_slam.nerfstudio_utils import save_kf_to_nerfstudio
+
+            # Generate final fused pointcloud (same as nerfstudio export)
+            pcd = save_kf_to_nerfstudio(
+                ns_save_path=save_dir / "nerfstudio-output",
+                keyframes=keyframes,
+                parent_log_path=Path("/world"),
+            )
+
+            # Log final pointcloud to Rerun
+            rr.log(
+                "/world/final_pointcloud",
+                rr.Points3D(positions=pcd.points, colors=pcd.colors),
+            )
+            print(f"[Full SLAM] ✓ Logged final fused pointcloud to Rerun viewer ({len(pcd.points):,} points)")
+
+    # Custom Shaders Mode: Log mesh-based reconstruction (experimental)
+    if cfg.custom_shaders and keyframes is not None:
+        print(f"\n[Custom Shaders] Building mesh-based reconstruction (experimental)...")
+
         if not cfg.no_viz and cfg.rerun_server_addr:
             import rerun as rr
             from mast3r_slam.rerun_log_utils import RerunLogger
 
             rr_logger = RerunLogger(parent_log_path=Path("/world"))
             rr_logger.log_global_map(keyframes, conf_thresh=cfg.conf_thresh)
-            print(f"[Full SLAM] ✓ Logged global map to Rerun viewer")
+            print(f"[Custom Shaders] ✓ Logged mesh-based global map to Rerun viewer")
 
     # Read trajectory and export to JSON
     seq = Path(cfg.dataset).stem
