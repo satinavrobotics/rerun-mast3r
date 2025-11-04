@@ -68,7 +68,7 @@ class RerunLogger:
         rgb_img: UInt8[np.ndarray, "H W 3"] = (rgb_img * 255).numpy().astype(np.uint8)
 
         # Debug: Check image data before logging
-        print(f"[RerunLogger] Logging frame {current_frame.frame_id}: img shape={rgb_img.shape}, dtype={rgb_img.dtype}, range=[{rgb_img.min()}, {rgb_img.max()}]")
+        # print(f"[RerunLogger] Logging frame {current_frame.frame_id}: img shape={rgb_img.shape}, dtype={rgb_img.dtype}, range=[{rgb_img.min()}, {rgb_img.max()}]")
 
         se3_pose: lietorch.SE3 = as_SE3(current_frame.T_WC.cpu())
         matb4x4: Float32[np.ndarray, "1 4 4"] = (
@@ -93,8 +93,8 @@ class RerunLogger:
         # Debug: Log camera pose and orientation
         import math
         yaw = math.atan2(rotation_matrix[1, 0], rotation_matrix[0, 0])
-        print(f"[RerunLogger] Frame {current_frame.frame_id}: pos=({translation_vector[0]:.4f}, {translation_vector[1]:.4f}, {translation_vector[2]:.4f}), yaw={yaw:.4f} rad ({math.degrees(yaw):.1f}°)")
-        print(f"[RerunLogger] Frame {current_frame.frame_id}: rotation_matrix[0,0]={rotation_matrix[0,0]:.4f}, rotation_matrix[1,0]={rotation_matrix[1,0]:.4f}")
+        # print(f"[RerunLogger] Frame {current_frame.frame_id}: pos=({translation_vector[0]:.4f}, {translation_vector[1]:.4f}, {translation_vector[2]:.4f}), yaw={yaw:.4f} rad ({math.degrees(yaw):.1f}°)")
+        # print(f"[RerunLogger] Frame {current_frame.frame_id}: rotation_matrix[0,0]={rotation_matrix[0,0]:.4f}, rotation_matrix[1,0]={rotation_matrix[1,0]:.4f}")
 
         cam_log_path = self.parent_log_path / "current_camera"
         rr.log(
@@ -119,7 +119,7 @@ class RerunLogger:
                     jpeg_quality=75
                 ),
             )
-            print(f"[RerunLogger] ✓ Logged image to rerun: {cam_log_path}/pinhole/image")
+            # print(f"[RerunLogger] ✓ Logged image to rerun: {cam_log_path}/pinhole/image")
         except Exception as e:
             print(f"[RerunLogger] ✗ Failed to log image: {e}")
         self.path_list.append(translation_vector.tolist())
@@ -134,9 +134,17 @@ class RerunLogger:
 
         with keyframes.lock:
             N_keyframes = len(keyframes)
-            # dirty_idx = keyframes.get_dirty_idx()
+            dirty_idx = keyframes.get_dirty_idx()
 
+        # Only process new keyframes or dirty (updated) keyframes to avoid O(N²) complexity
+        # New keyframes: not yet logged (not in self.keyframe_logged_list)
+        # Dirty keyframes: poses updated by backend optimization (in dirty_idx)
+        keyframes_to_process = []
         for kf_idx in range(N_keyframes):
+            if kf_idx not in self.keyframe_logged_list or kf_idx in dirty_idx:
+                keyframes_to_process.append(kf_idx)
+
+        for kf_idx in keyframes_to_process:
             keyframe: Frame = keyframes[kf_idx]
             se3_pose: lietorch.SE3 = as_SE3(keyframe.T_WC.cpu())
             matb4x4: Float32[np.ndarray, "1 4 4"] = (
@@ -263,7 +271,7 @@ class RerunLogger:
         from mast3r_slam.config import config
         from mast3r_slam.geometry import get_pixel_coords
 
-        print(f"[RerunLogger] Building global mesh from {len(keyframes)} keyframes with conf_thresh={conf_thresh}...")
+        # print(f"[RerunLogger] Building global mesh from {len(keyframes)} keyframes with conf_thresh={conf_thresh}...")
 
         total_vertices = 0
         total_triangles = 0

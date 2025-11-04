@@ -98,29 +98,30 @@ def main():
             rr_logger.log_global_map(keyframes, conf_thresh=cfg.conf_thresh)
             print(f"[Custom Shaders] ✓ Logged mesh-based global map to Rerun viewer")
 
-    # Read trajectory and export to JSON
-    seq = Path(cfg.dataset).stem
-    traj = Path("logs") / cfg.save_as / f"{seq}.txt"
-    if not traj.exists():
-        raise FileNotFoundError(f"Expected trajectory at {traj}")
+    # Export trajectory to JSON (optional, for debugging/analysis)
+    if cfg.log_trajectory_json:
+        seq = Path(cfg.dataset).stem
+        traj = Path("logs") / cfg.save_as / f"{seq}.txt"
+        if not traj.exists():
+            print(f"[Warning] Expected trajectory at {traj}, skipping JSON export")
+        else:
+            positions, yaws = [], []
+            for line in traj.read_text().splitlines():
+                parts = line.split()
+                if len(parts) < 8:
+                    continue
+                x, y = float(parts[1]), float(parts[2])
+                qx, qy, qz, qw = map(float, parts[4:8])
+                t0 = 2 * (qw * qz + qx * qy)
+                t1 = 1 - 2 * (qy * qy + qz * qz)
+                yaw = math.atan2(t0, t1)
+                positions.append([x, y])
+                yaws.append(yaw)
 
-    positions, yaws = [], []
-    for line in traj.read_text().splitlines():
-        parts = line.split()
-        if len(parts) < 8:
-            continue
-        x, y = float(parts[1]), float(parts[2])
-        qx, qy, qz, qw = map(float, parts[4:8])
-        t0 = 2 * (qw * qz + qx * qy)
-        t1 = 1 - 2 * (qy * qy + qz * qz)
-        yaw = math.atan2(t0, t1)
-        positions.append([x, y])
-        yaws.append(yaw)
-
-    out = {"position": positions, "yaw": yaws}
-    json_path = Path(cfg.save_as + "_traj_data.json")
-    json_path.write_text(json.dumps(out, indent=2))
-    print(f"Wrote {{'position':{len(positions)}, 'yaw':{len(yaws)}}} to {json_path}")
+            out = {"position": positions, "yaw": yaws}
+            json_path = Path(cfg.save_as + "_traj_data.json")
+            json_path.write_text(json.dumps(out, indent=2))
+            print(f"[Trajectory JSON] Wrote {{'position':{len(positions)}, 'yaw':{len(yaws)}}} to {json_path}")
 
 
 # ------------------------------------------------------------------

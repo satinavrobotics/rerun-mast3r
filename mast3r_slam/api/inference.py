@@ -56,6 +56,7 @@ class InferenceConfig:
     full_slam: bool = False  # Full SLAM mode: build and export global fused pointcloud (dense reconstruction)
     conf_thresh: float = 0.0  # Confidence threshold for pointcloud filtering (C_conf from config)
     custom_shaders: bool = False  # Custom shader mode: replicate OpenGL shader behavior with mesh-based reconstruction (experimental)
+    log_trajectory_json: bool = False  # Export trajectory to JSON file (for debugging/analysis)
 
 
 def mast3r_slam_inference(inf_config: InferenceConfig):
