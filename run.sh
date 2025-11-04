@@ -9,7 +9,7 @@ conda activate mast3r-slam
 python /workspace/rerun_mast3r/sati_master_slam.py \
   --dataset /workspace/dataset/rgb_Cafeteria_2 \
   --config /workspace/rerun_mast3r/config/base.yaml \
-  --save-as stanford_out \
+  --save-as sit_out \
   --img-size 512 \
   --all-frames \
   --rr-config.headless \
