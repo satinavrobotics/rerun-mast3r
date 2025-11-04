@@ -76,7 +76,7 @@ def main():
             pcd = save_kf_to_nerfstudio(
                 ns_save_path=save_dir / "nerfstudio-output",
                 keyframes=keyframes,
-                parent_log_path=Path("/world"),
+                confidence_thresh=100,  # Use default confidence threshold
             )
 
             # Log final pointcloud to Rerun
