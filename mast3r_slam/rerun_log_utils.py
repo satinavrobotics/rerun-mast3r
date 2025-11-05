@@ -48,6 +48,7 @@ class RerunLogger:
 
         self.path_list = []
         self.keyframe_logged_list = []
+        self.global_map_logged_list = []  # Track which keyframes have been logged as meshes (custom shaders mode)
         self.num_keyframes_logged = 0
         self.conf_thresh = 1.5  # Lowered from 7 to 1.5 for denser pointclouds
         self.image_plane_distance = 0.2
@@ -331,13 +332,19 @@ class RerunLogger:
         from mast3r_slam.config import config
         from mast3r_slam.geometry import get_pixel_coords
 
-        # print(f"[RerunLogger] Building global mesh from {len(keyframes)} keyframes with conf_thresh={conf_thresh}...")
-
+        # Only process NEW keyframes (not already logged)
+        # This achieves O(N) complexity like the original OpenGL implementation
         total_vertices = 0
         total_triangles = 0
+        num_new_keyframes = 0
 
         for i in range(len(keyframes)):
+            # Skip keyframes that have already been logged
+            if i in self.global_map_logged_list:
+                continue
+
             keyframe = keyframes[i]
+            num_new_keyframes += 1
 
             # Get image dimensions
             h, w = keyframe.img_shape.flatten()[:2].cpu().numpy().astype(int)
@@ -437,10 +444,13 @@ class RerunLogger:
                     total_vertices += len(filtered_vertices)
                     total_triangles += len(filtered_triangles)
 
-        if total_vertices > 0:
-            print(f"[RerunLogger] ✓ Logged global mesh: {total_vertices:,} vertices, {total_triangles:,} triangles from {len(keyframes)} keyframes")
-        else:
-            print(f"[RerunLogger] ✗ No mesh to log (all filtered out by conf_thresh={conf_thresh})")
+                    # Mark this keyframe as logged
+                    self.global_map_logged_list.append(i)
+
+        if num_new_keyframes > 0:
+            print(f"[RerunLogger] ✓ Logged {num_new_keyframes} new keyframe mesh(es): {total_vertices:,} vertices, {total_triangles:,} triangles (total keyframes: {len(keyframes)})")
+        # else:
+        #     print(f"[RerunLogger] No new keyframes to log")
 
     def _frame_X(self, frame):
         """
