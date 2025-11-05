@@ -58,36 +58,7 @@ def save_kf_to_nerfstudio(
     images_dir = ns_save_path / "images"
     images_dir.mkdir(exist_ok=True)
 
-    # First pass: collect all Z-coordinates to compute adaptive threshold
-    print("[NerfStudio] Computing adaptive ceiling threshold...")
-    all_z_coords = []
-    for i in range(len(keyframes)):
-        keyframe = keyframes[i]
-        se3_pose: lietorch.SE3 = as_SE3(keyframe.T_WC.cpu())
-        matb4x4: Float32[np.ndarray, "1 4 4"] = se3_pose.matrix().numpy().astype(dtype=np.float32)
-        mat4x4_cv: Float32[np.ndarray, "4 4"] = matb4x4[0]
-
-        mask = keyframe.C.cpu().numpy() > confidence_thresh
-        mask = mask.squeeze()
-
-        positions: Float32[np.ndarray, "num_points 3"] = keyframe.X_canon.cpu().numpy()
-        masked_positions = positions[mask]
-
-        if len(masked_positions) > 0:
-            # Transform to world coordinates
-            homogeneous_positions = np.ones((masked_positions.shape[0], 4), dtype=np.float32)
-            homogeneous_positions[:, :3] = masked_positions
-            world_positions = (mat4x4_cv @ homogeneous_positions.T).T[:, :3]
-            all_z_coords.append(world_positions[:, 2])
-
-    # Compute adaptive threshold: use 70th percentile to separate ground from ceiling
-    # This adapts to the actual height distribution in the scene
-    all_z_coords = np.concatenate(all_z_coords)
-    z_threshold = np.percentile(all_z_coords, 70)
-    print(f"[NerfStudio] Adaptive ceiling threshold: Z < {z_threshold:.2f}m (70th percentile)")
-    print(f"[NerfStudio] Z-coord range: [{all_z_coords.min():.2f}, {all_z_coords.max():.2f}]")
-
-    # Second pass: process keyframes with adaptive threshold
+    # Process keyframes (no ceiling filtering needed - already done in per-keyframe logging)
     ns_frames_list = []
     pcd_positions = []
     pcd_colors = []
@@ -139,14 +110,7 @@ def save_kf_to_nerfstudio(
         # Apply transformation (points are column vectors: p_world = T_world_cam * p_cam)
         world_positions = (mat4x4_cv @ homogeneous_positions.T).T[:, :3]
 
-        # Filter out ceiling using adaptive Z threshold computed from all keyframes
-        if len(world_positions) > 0:
-            z_coords = world_positions[:, 2]  # Z is vertical in world frame
-            height_mask = z_coords < z_threshold  # Use adaptive threshold
-
-            world_positions = world_positions[height_mask]
-            masked_colors = masked_colors[height_mask]
-
+        # No ceiling filtering needed here - already done in per-keyframe logging
         pcd_positions.append(world_positions)
         pcd_colors.append(masked_colors)
 

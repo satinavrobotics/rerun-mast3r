@@ -247,6 +247,10 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
             print(f"FPS: {FPS}")
         i += 1
 
+    # Finalize any remaining pointclouds in the batch
+    if inf_config.full_slam:
+        rr_logger.finalize_pointclouds()
+
     if dataset.save_results:
         save_dir, seq_name = eval.prepare_savedir(inf_config, dataset)
 

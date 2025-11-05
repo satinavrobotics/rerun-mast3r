@@ -49,10 +49,84 @@ class RerunLogger:
         self.num_keyframes_logged = 0
         self.conf_thresh = 1.5  # Lowered from 7 to 1.5 for denser pointclouds
 
-        # For adaptive ceiling filtering: collect Z-coords to compute running threshold
-        self.all_z_coords = []  # Running list of all Z-coordinates seen so far
-        self.z_threshold = None  # Adaptive threshold, updated periodically
+        # For adaptive ceiling filtering: batch processing approach
+        self.pending_keyframes = []  # Store keyframe data for batch processing
+        self.batch_size = 10  # Process every 10 keyframes
         self.image_plane_distance = 0.2
+
+    def _process_keyframe_batch(self):
+        """Process a batch of keyframes with adaptive ceiling filtering."""
+        if not self.pending_keyframes:
+            return
+
+        print(f"[RerunLogger] Processing batch of {len(self.pending_keyframes)} keyframes...")
+
+        # First pass: collect all Z-coordinates from this batch
+        all_z_coords = []
+        for kf_data in self.pending_keyframes:
+            positions = kf_data['positions']
+            conf_mask = kf_data['conf_mask']
+            mat4x4 = kf_data['mat4x4']
+
+            masked_positions = positions[conf_mask]
+            if len(masked_positions) > 0:
+                # Transform to world coordinates
+                homogeneous_positions = np.ones((masked_positions.shape[0], 4), dtype=np.float32)
+                homogeneous_positions[:, :3] = masked_positions
+                world_positions = (mat4x4 @ homogeneous_positions.T).T[:, :3]
+                all_z_coords.append(world_positions[:, 2])
+
+        # Compute adaptive threshold from this batch
+        if all_z_coords:
+            all_z = np.concatenate(all_z_coords)
+            z_threshold = np.percentile(all_z, 85)  # 85th percentile
+            print(f"[RerunLogger] Batch adaptive ceiling threshold: Z < {z_threshold:.2f}m (85th percentile)")
+            print(f"[RerunLogger] Z-coord range: [{all_z.min():.2f}, {all_z.max():.2f}]")
+        else:
+            z_threshold = None
+
+        # Second pass: filter and log each keyframe
+        for kf_data in self.pending_keyframes:
+            positions = kf_data['positions']
+            colors = kf_data['colors']
+            conf_mask = kf_data['conf_mask']
+            mat4x4 = kf_data['mat4x4']
+            cam_log_path = kf_data['cam_log_path']
+
+            masked_positions = positions[conf_mask]
+            masked_colors = colors[conf_mask]
+
+            # Apply adaptive ceiling filter if we have a threshold
+            if z_threshold is not None and len(masked_positions) > 0:
+                # Transform to world coordinates
+                homogeneous_positions = np.ones((masked_positions.shape[0], 4), dtype=np.float32)
+                homogeneous_positions[:, :3] = masked_positions
+                world_positions = (mat4x4 @ homogeneous_positions.T).T[:, :3]
+                z_coords = world_positions[:, 2]
+
+                # Filter by adaptive Z threshold
+                height_mask = z_coords < z_threshold
+                masked_positions = masked_positions[height_mask]
+                masked_colors = masked_colors[height_mask]
+
+            # Log the filtered pointcloud
+            if len(masked_positions) > 0:
+                rr.log(
+                    f"{cam_log_path}/pointcloud",
+                    rr.Points3D(
+                        positions=masked_positions,
+                        colors=masked_colors,
+                    ),
+                )
+
+        # Clear the batch
+        self.pending_keyframes = []
+
+    def finalize_pointclouds(self):
+        """Process any remaining keyframes in the pending batch."""
+        if self.pending_keyframes:
+            print(f"[RerunLogger] Finalizing: processing remaining {len(self.pending_keyframes)} keyframes...")
+            self._process_keyframe_batch()
 
     def log_frame(
         self, current_frame: Frame, keyframes: SharedKeyframes, states: SharedStates
@@ -192,60 +266,23 @@ class RerunLogger:
                 if self.log_pointclouds:
                     # Create a mask based on the confidence values
                     conf_mask = keyframe.C.cpu().numpy() > self.conf_thresh
+                    conf_mask = conf_mask.squeeze()
 
-                    # Convert the mask from shape (h*w, 1) to shape (h*w,)
-                    conf_mask = conf_mask.squeeze()  # Remove the trailing dimension to get a 1D boolean array
-
-                    # Now apply the mask to both positions and colors
+                    # Store keyframe data for batch processing
                     positions: Float32[np.ndarray, "num_points 3"] = keyframe.X_canon.cpu().numpy()
                     colors: UInt8[np.ndarray, "num_points 3"] = kf_img.reshape(-1, 3)
 
-                    # Apply confidence mask first
-                    masked_positions = positions[conf_mask]
-                    masked_colors = colors[conf_mask]
+                    self.pending_keyframes.append({
+                        'positions': positions,
+                        'colors': colors,
+                        'conf_mask': conf_mask,
+                        'mat4x4': mat4x4,
+                        'cam_log_path': cam_log_path,
+                    })
 
-                    # Filter out ceiling using adaptive Z threshold in world frame
-                    # Transform points to world coordinates first, then filter
-                    if len(masked_positions) > 0:
-                        # Convert to homogeneous coordinates
-                        homogeneous_positions = np.ones((masked_positions.shape[0], 4), dtype=np.float32)
-                        homogeneous_positions[:, :3] = masked_positions
-
-                        # Transform to world coordinates
-                        world_positions = (mat4x4 @ homogeneous_positions.T).T[:, :3]
-                        z_coords = world_positions[:, 2]  # Z is vertical in world frame
-
-                        # Collect Z-coords for adaptive threshold computation (sample to avoid memory issues)
-                        # Only keep every 10th point to reduce memory usage
-                        z_sample = z_coords[::10] if len(z_coords) > 100 else z_coords
-                        self.all_z_coords.append(z_sample)
-
-                        # Only start filtering after we have enough keyframes (20+)
-                        # Update adaptive threshold every 10 keyframes
-                        num_kf_logged = len(self.all_z_coords)
-                        if num_kf_logged >= 20 and (num_kf_logged % 10 == 0 or self.z_threshold is None):
-                            all_z = np.concatenate(self.all_z_coords)
-                            self.z_threshold = np.percentile(all_z, 85)  # 85th percentile (more conservative)
-                            print(f"[RerunLogger] Updated adaptive ceiling threshold: Z < {self.z_threshold:.2f}m (85th percentile, {len(all_z)} sampled points)")
-
-                        # Only apply filter if we have a valid threshold
-                        if self.z_threshold is not None:
-                            # Filter by adaptive Z threshold
-                            height_mask = z_coords < self.z_threshold
-
-                            # Apply height filter and convert back to camera frame for logging
-                            # (Rerun will transform them back to world using the camera transform)
-                            masked_positions = masked_positions[height_mask]
-                            masked_colors = masked_colors[height_mask]
-
-                    if len(masked_positions) > 0:
-                        rr.log(
-                            f"{cam_log_path}/pointcloud",
-                            rr.Points3D(
-                                positions=masked_positions,
-                                colors=masked_colors,
-                            ),
-                        )
+                    # Process batch every 10 keyframes
+                    if len(self.pending_keyframes) >= self.batch_size:
+                        self._process_keyframe_batch()
                 self.keyframe_logged_list.append(kf_idx)
             rr.log(
                 f"{cam_log_path}/pinhole",
