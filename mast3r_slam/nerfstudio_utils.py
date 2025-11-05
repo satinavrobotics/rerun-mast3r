@@ -116,8 +116,8 @@ def save_kf_to_nerfstudio(
             masked_positions = masked_positions[ceiling_mask]
             masked_colors = masked_colors[ceiling_mask]
 
-            print(f"[DEBUG] Keyframe {i}: Y range [{y_coords.min():.2f}, {y_coords.max():.2f}], "
-                  f"threshold={y_threshold:.2f}, removed {(~ceiling_mask).sum()}/{len(y_coords)} ceiling points")
+            # print(f"[DEBUG] Keyframe {i}: Y range [{y_coords.min():.2f}, {y_coords.max():.2f}], "
+                  # f"threshold={y_threshold:.2f}, removed {(~ceiling_mask).sum()}/{len(y_coords)} ceiling points")
 
         # Convert to homogeneous coordinates (add 1 as 4th coordinate)
         homogeneous_positions = np.ones(

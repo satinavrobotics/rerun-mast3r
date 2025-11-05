@@ -81,8 +81,8 @@ class RerunLogger:
         # We want to remove ceiling, so we remove the BOTTOM 42% (lowest Y values)
         y_threshold = np.percentile(y_coords, 42)
 
-        print(f"[DEBUG] LOCAL Y range: [{y_min:.2f}, {y_max:.2f}], range={y_range:.2f}m")
-        print(f"[DEBUG] Y threshold (42nd percentile): {y_threshold:.2f}")
+        # print(f"[DEBUG] LOCAL Y range: [{y_min:.2f}, {y_max:.2f}], range={y_range:.2f}m")
+        # print(f"[DEBUG] Y threshold (42nd percentile): {y_threshold:.2f}")
 
         # Filter by Y threshold - keep points ABOVE threshold (higher Y = floor/walls)
         height_mask = y_coords > y_threshold
@@ -91,7 +91,7 @@ class RerunLogger:
 
         # Debug info
         points_removed = len(positions) - len(filtered_positions)
-        print(f"[DEBUG] Removed {points_removed}/{len(positions)} points ({100*points_removed/len(positions):.1f}%)")
+        # print(f"[DEBUG] Removed {points_removed}/{len(positions)} points ({100*points_removed/len(positions):.1f}%)")
 
         return filtered_positions, filtered_colors
 
