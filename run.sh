@@ -7,7 +7,7 @@ conda activate mast3r-slam
 
 # CLI usage example:
 python /workspace/rerun_mast3r/sati_master_slam.py \
-  --dataset /workspace/dataset/rgb_Cafeteria_2 \
+  --dataset /workspace/dataset/rgb_no1vcF_17_0 \
   --config /workspace/rerun_mast3r/config/base.yaml \
   --save-as sit_out \
   --img-size 512 \
