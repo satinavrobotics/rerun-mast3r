@@ -82,8 +82,10 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
         print(f"[SLAM Inference] ✓ Connected with flush_timeout_sec=0.1 (auto-flush enabled)")
 
     parent_log_path = Path("/world")
-    # Only log pointclouds if --full-slam is enabled (for dense reconstruction)
-    rr_logger = RerunLogger(parent_log_path, log_pointclouds=inf_config.full_slam)
+    # Only log per-keyframe pointclouds if --full-slam is enabled WITHOUT --custom-shaders
+    # Custom shaders mode uses log_global_map() instead (mesh-based global reconstruction)
+    log_pointclouds = inf_config.full_slam and not inf_config.custom_shaders
+    rr_logger = RerunLogger(parent_log_path, log_pointclouds=log_pointclouds)
     # create a blueprint
     blueprint: rrb.Blueprint = create_blueprints(parent_log_path)
     rr.send_blueprint(blueprint)

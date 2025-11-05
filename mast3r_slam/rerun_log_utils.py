@@ -32,7 +32,9 @@ def create_blueprints(parent_log_path: Path) -> rrb.Blueprint:
 class RerunLogger:
     def __init__(self, parent_log_path: Path, log_pointclouds: bool = False):
         self.parent_log_path: Path = parent_log_path
-        self.log_pointclouds = log_pointclouds  # Only log pointclouds if --full-slam is enabled
+        # Only log per-keyframe pointclouds if --full-slam is enabled WITHOUT --custom-shaders
+        # Custom shaders mode uses log_global_map() instead (mesh-based global reconstruction)
+        self.log_pointclouds = log_pointclouds
         # Create a 3x3 rotation matrix for 90-degree rotation around X-axis
         rr.log(f"{self.parent_log_path}", rr.ViewCoordinates.RDF, static=True)
         # this does not work and I don't know why
@@ -374,16 +376,15 @@ class RerunLogger:
 
                 # Transform from camera frame to world frame using T_WC
                 se3_pose = as_SE3(keyframe.T_WC.cpu())
-                mat4x4_cv = se3_pose.matrix().numpy().astype(np.float32)[0]
+                mat4x4 = se3_pose.matrix().numpy().astype(np.float32)[0]
 
-                # Convert from OpenCV (RDF) to OpenGL (RUB) convention (same as keyframe logging)
-                mat4x4_gl = conventions.convert_pose(
-                    mat4x4_cv, src_convention=conventions.CC.CV, dst_convention=conventions.CC.GL
-                )
+                # Keep in OpenCV (RDF) convention - no conversion needed
+                # This matches the full-SLAM mode behavior (see log_keyframes method)
+                # World is RDF, points are in camera frame (RDF), so pose should also be RDF
 
                 # Extract rotation (3x3) and translation (3,) from 4x4 matrix
-                rotation_matrix = mat4x4_gl[:3, :3]
-                translation_vector = mat4x4_gl[:3, 3]
+                rotation_matrix = mat4x4[:3, :3]
+                translation_vector = mat4x4[:3, 3]
 
                 rr.log(
                     cam_log_path,
