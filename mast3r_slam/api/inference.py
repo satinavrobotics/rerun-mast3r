@@ -186,8 +186,9 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
             states.set_frame(frame)
             rr_logger.log_frame(frame, keyframes, states)
 
-            # Full SLAM: Log global map after initial keyframe
-            if inf_config.full_slam and not inf_config.no_viz:
+            # Custom Shaders Mode: Log global mesh map after initial keyframe (experimental)
+            # This replicates OpenGL shader behavior but is slower and experimental
+            if inf_config.custom_shaders and not inf_config.no_viz:
                 rr_logger.log_global_map(keyframes, conf_thresh=inf_config.conf_thresh)
 
             # Collect all frames if --all-frames flag is set
