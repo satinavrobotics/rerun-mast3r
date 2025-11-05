@@ -52,8 +52,8 @@ class RerunLogger:
 
     def _filter_ceiling_local(self, positions, colors, mat4x4):
         """
-        Memory-efficient ceiling filter: removes top 20% of points by Z-value.
-        Each pointcloud is filtered independently based on its own Z-range.
+        Memory-efficient ceiling filter: removes points above a certain height.
+        Uses adaptive threshold based on Z-range to remove ceiling layer.
 
         Args:
             positions: Point positions in camera frame
@@ -72,13 +72,18 @@ class RerunLogger:
         world_positions = (mat4x4 @ homogeneous_positions.T).T
         z_coords = world_positions[:, 2]  # Z is vertical in world frame
 
-        # ALWAYS print debug info to verify filtering is working
-        print(f"[DEBUG] Before filtering: {len(positions)} points, Z range: [{z_coords.min():.2f}, {z_coords.max():.2f}]")
+        z_min = z_coords.min()
+        z_max = z_coords.max()
+        z_range = z_max - z_min
 
-        # Simple approach: remove top 20% of points by Z-value
-        # This removes ceiling while keeping floor and walls
-        z_threshold = np.percentile(z_coords, 80)  # Keep bottom 80%
-        print(f"[DEBUG] Z threshold (80th percentile): {z_threshold:.2f}")
+        # Strategy: Keep only points within bottom 50% of the Z-range
+        # This aggressively removes ceiling while keeping floor and lower walls
+        # For example: if Z ranges from 2m to 11m (9m range),
+        # we keep points from 2m to 2m + 0.5*9m = 6.5m
+        z_threshold = z_min + (0.5 * z_range)
+
+        print(f"[DEBUG] Z range: [{z_min:.2f}, {z_max:.2f}], range={z_range:.2f}m")
+        print(f"[DEBUG] Z threshold (bottom 50% of range): {z_threshold:.2f}")
 
         # Filter by Z threshold
         height_mask = z_coords < z_threshold
@@ -87,7 +92,7 @@ class RerunLogger:
 
         # Debug info
         points_removed = len(positions) - len(filtered_positions)
-        print(f"[DEBUG] After filtering: {len(filtered_positions)} points, removed {points_removed} points")
+        print(f"[DEBUG] Removed {points_removed}/{len(positions)} points ({100*points_removed/len(positions):.1f}%)")
 
         return filtered_positions, filtered_colors
 
