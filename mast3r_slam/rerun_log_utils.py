@@ -215,22 +215,28 @@ class RerunLogger:
                         world_positions = (mat4x4 @ homogeneous_positions.T).T[:, :3]
                         z_coords = world_positions[:, 2]  # Z is vertical in world frame
 
-                        # Collect Z-coords for adaptive threshold computation
-                        self.all_z_coords.append(z_coords)
+                        # Collect Z-coords for adaptive threshold computation (sample to avoid memory issues)
+                        # Only keep every 10th point to reduce memory usage
+                        z_sample = z_coords[::10] if len(z_coords) > 100 else z_coords
+                        self.all_z_coords.append(z_sample)
 
+                        # Only start filtering after we have enough keyframes (20+)
                         # Update adaptive threshold every 10 keyframes
-                        if len(self.all_z_coords) % 10 == 0 or self.z_threshold is None:
+                        num_kf_logged = len(self.all_z_coords)
+                        if num_kf_logged >= 20 and (num_kf_logged % 10 == 0 or self.z_threshold is None):
                             all_z = np.concatenate(self.all_z_coords)
-                            self.z_threshold = np.percentile(all_z, 70)  # 70th percentile
-                            print(f"[RerunLogger] Updated adaptive ceiling threshold: Z < {self.z_threshold:.2f}m (70th percentile, {len(all_z)} points)")
+                            self.z_threshold = np.percentile(all_z, 85)  # 85th percentile (more conservative)
+                            print(f"[RerunLogger] Updated adaptive ceiling threshold: Z < {self.z_threshold:.2f}m (85th percentile, {len(all_z)} sampled points)")
 
-                        # Filter by adaptive Z threshold
-                        height_mask = z_coords < self.z_threshold
+                        # Only apply filter if we have a valid threshold
+                        if self.z_threshold is not None:
+                            # Filter by adaptive Z threshold
+                            height_mask = z_coords < self.z_threshold
 
-                        # Apply height filter and convert back to camera frame for logging
-                        # (Rerun will transform them back to world using the camera transform)
-                        masked_positions = masked_positions[height_mask]
-                        masked_colors = masked_colors[height_mask]
+                            # Apply height filter and convert back to camera frame for logging
+                            # (Rerun will transform them back to world using the camera transform)
+                            masked_positions = masked_positions[height_mask]
+                            masked_colors = masked_colors[height_mask]
 
                     if len(masked_positions) > 0:
                         rr.log(
