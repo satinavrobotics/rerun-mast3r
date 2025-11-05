@@ -52,8 +52,9 @@ class RerunLogger:
 
     def _filter_ceiling_local(self, positions, colors, mat4x4):
         """
-        Memory-efficient ceiling filter: removes top 30% of points by Z-value.
-        Filters based on LOCAL Z-range of THIS pointcloud only (in camera frame).
+        Memory-efficient ceiling filter: removes top 30% of points by Y-value.
+        Filters based on LOCAL Y-range of THIS pointcloud only (in camera frame).
+        Y-axis is vertical in camera coordinates.
 
         Args:
             positions: Point positions in camera frame
@@ -66,23 +67,24 @@ class RerunLogger:
         if len(positions) == 0:
             return positions, colors
 
-        # Use LOCAL camera-frame Z coordinates (depth from camera)
-        # This ensures each pointcloud is filtered based on its OWN Z-range
-        z_coords = positions[:, 2]  # Z in camera frame
+        # Use LOCAL camera-frame Y coordinates (vertical axis in camera frame)
+        # In camera coordinates: X=right, Y=up, Z=forward (depth)
+        # This ensures each pointcloud is filtered based on its OWN Y-range
+        y_coords = positions[:, 1]  # Y in camera frame (vertical)
 
-        z_min = z_coords.min()
-        z_max = z_coords.max()
-        z_range = z_max - z_min
+        y_min = y_coords.min()
+        y_max = y_coords.max()
+        y_range = y_max - y_min
 
-        # Strategy: Remove top 30% of points by Z-value (70th percentile)
+        # Strategy: Remove top 30% of points by Y-value (70th percentile)
         # This removes ceiling points while keeping floor and walls
-        z_threshold = np.percentile(z_coords, 70)
+        y_threshold = np.percentile(y_coords, 70)
 
-        print(f"[DEBUG] LOCAL Z range: [{z_min:.2f}, {z_max:.2f}], range={z_range:.2f}m")
-        print(f"[DEBUG] Z threshold (70th percentile): {z_threshold:.2f}")
+        print(f"[DEBUG] LOCAL Y range: [{y_min:.2f}, {y_max:.2f}], range={y_range:.2f}m")
+        print(f"[DEBUG] Y threshold (70th percentile): {y_threshold:.2f}")
 
-        # Filter by Z threshold
-        height_mask = z_coords < z_threshold
+        # Filter by Y threshold - keep points BELOW threshold (lower Y = lower height)
+        height_mask = y_coords < y_threshold
         filtered_positions = positions[height_mask]
         filtered_colors = colors[height_mask]
 
