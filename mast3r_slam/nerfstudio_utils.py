@@ -100,6 +100,19 @@ def save_kf_to_nerfstudio(
         masked_positions = positions[mask]  # Now selects entire rows where mask is True
         masked_colors = colors[mask]
 
+        # Filter out ceiling: keep only bottom 58% by height (Y-coordinate in camera frame)
+        # In camera frame (RDF), Z points forward, Y points down, X points right
+        # We want to filter by Y (vertical) coordinate to remove ceiling
+        if len(masked_positions) > 0:
+            y_coords = masked_positions[:, 1]  # Y is vertical in camera frame
+            # Calculate percentile of Y (higher Y = lower in scene since Y points down)
+            # We want to keep points with Y >= 42th percentile (remove top 42% = ceiling)
+            y_threshold = np.percentile(y_coords, 42)
+            height_mask = y_coords >= y_threshold
+
+            masked_positions = masked_positions[height_mask]
+            masked_colors = masked_colors[height_mask]
+
         # Convert to homogeneous coordinates (add 1 as 4th coordinate)
         homogeneous_positions = np.ones(
             (masked_positions.shape[0], 4), dtype=np.float32
