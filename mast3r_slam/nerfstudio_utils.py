@@ -58,7 +58,8 @@ def save_kf_to_nerfstudio(
     images_dir = ns_save_path / "images"
     images_dir.mkdir(exist_ok=True)
 
-    # Process keyframes (no ceiling filtering needed - already done in per-keyframe logging)
+    # Process keyframes with ceiling filtering
+    # Each keyframe's pointcloud is filtered based on its own local Y-range
     ns_frames_list = []
     pcd_positions = []
     pcd_colors = []
@@ -101,6 +102,23 @@ def save_kf_to_nerfstudio(
         masked_positions = positions[mask]  # Now selects entire rows where mask is True
         masked_colors = colors[mask]
 
+        # Apply ceiling filter based on LOCAL Y-range in camera coordinates
+        # Each pointcloud is filtered independently based on its own Y-distribution
+        if len(masked_positions) > 0:
+            y_coords = masked_positions[:, 1]  # Y in camera frame (vertical)
+
+            # Remove bottom 42% of points by Y-value (42nd percentile)
+            # In camera coords, Y points DOWN, so low Y = ceiling, high Y = floor
+            y_threshold = np.percentile(y_coords, 42)
+
+            # Keep points ABOVE threshold (higher Y = floor/walls, remove ceiling)
+            ceiling_mask = y_coords > y_threshold
+            masked_positions = masked_positions[ceiling_mask]
+            masked_colors = masked_colors[ceiling_mask]
+
+            print(f"[DEBUG] Keyframe {i}: Y range [{y_coords.min():.2f}, {y_coords.max():.2f}], "
+                  f"threshold={y_threshold:.2f}, removed {(~ceiling_mask).sum()}/{len(y_coords)} ceiling points")
+
         # Convert to homogeneous coordinates (add 1 as 4th coordinate)
         homogeneous_positions = np.ones(
             (masked_positions.shape[0], 4), dtype=np.float32
@@ -110,7 +128,6 @@ def save_kf_to_nerfstudio(
         # Apply transformation (points are column vectors: p_world = T_world_cam * p_cam)
         world_positions = (mat4x4_cv @ homogeneous_positions.T).T[:, :3]
 
-        # No ceiling filtering needed here - already done in per-keyframe logging
         pcd_positions.append(world_positions)
         pcd_colors.append(masked_colors)
 

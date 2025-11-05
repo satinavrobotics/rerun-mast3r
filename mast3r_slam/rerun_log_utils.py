@@ -76,13 +76,13 @@ class RerunLogger:
         y_max = y_coords.max()
         y_range = y_max - y_min
 
-        # Strategy: Remove bottom 30% of points by Y-value (30th percentile)
+        # Strategy: Remove bottom 42% of points by Y-value (42nd percentile)
         # In camera coords, Y often points DOWN, so low Y = ceiling, high Y = floor
-        # We want to remove ceiling, so we remove the BOTTOM 30% (lowest Y values)
-        y_threshold = np.percentile(y_coords, 30)
+        # We want to remove ceiling, so we remove the BOTTOM 42% (lowest Y values)
+        y_threshold = np.percentile(y_coords, 42)
 
         print(f"[DEBUG] LOCAL Y range: [{y_min:.2f}, {y_max:.2f}], range={y_range:.2f}m")
-        print(f"[DEBUG] Y threshold (30th percentile): {y_threshold:.2f}")
+        print(f"[DEBUG] Y threshold (42nd percentile): {y_threshold:.2f}")
 
         # Filter by Y threshold - keep points ABOVE threshold (higher Y = floor/walls)
         height_mask = y_coords > y_threshold
