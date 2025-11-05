@@ -11,7 +11,6 @@ python /workspace/rerun_mast3r/sati_master_slam.py \
   --config /workspace/rerun_mast3r/config/base.yaml \
   --save-as sit_out \
   --img-size 512 \
-  --all-frames \
   --rr-config.headless \
   --rerun-server-addr master_slam_cli:9878 \
   --full-slam \

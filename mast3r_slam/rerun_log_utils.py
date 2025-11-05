@@ -52,13 +52,13 @@ class RerunLogger:
 
     def _filter_ceiling_local(self, positions, colors, mat4x4):
         """
-        Memory-efficient ceiling filter: removes points above a certain height.
-        Uses adaptive threshold based on Z-range to remove ceiling layer.
+        Memory-efficient ceiling filter: removes top 30% of points by Z-value.
+        Filters based on LOCAL Z-range of THIS pointcloud only (in camera frame).
 
         Args:
             positions: Point positions in camera frame
             colors: Point colors
-            mat4x4: Camera pose transformation matrix
+            mat4x4: Camera pose transformation matrix (not used for filtering)
 
         Returns:
             Filtered positions and colors
@@ -66,24 +66,20 @@ class RerunLogger:
         if len(positions) == 0:
             return positions, colors
 
-        # Transform to world coordinates to get Z values (only Z column needed)
-        homogeneous_positions = np.ones((positions.shape[0], 4), dtype=np.float32)
-        homogeneous_positions[:, :3] = positions
-        world_positions = (mat4x4 @ homogeneous_positions.T).T
-        z_coords = world_positions[:, 2]  # Z is vertical in world frame
+        # Use LOCAL camera-frame Z coordinates (depth from camera)
+        # This ensures each pointcloud is filtered based on its OWN Z-range
+        z_coords = positions[:, 2]  # Z in camera frame
 
         z_min = z_coords.min()
         z_max = z_coords.max()
         z_range = z_max - z_min
 
-        # Strategy: Keep only points within bottom 50% of the Z-range
-        # This aggressively removes ceiling while keeping floor and lower walls
-        # For example: if Z ranges from 2m to 11m (9m range),
-        # we keep points from 2m to 2m + 0.5*9m = 6.5m
-        z_threshold = z_min + (0.5 * z_range)
+        # Strategy: Remove top 30% of points by Z-value (70th percentile)
+        # This removes ceiling points while keeping floor and walls
+        z_threshold = np.percentile(z_coords, 70)
 
-        print(f"[DEBUG] Z range: [{z_min:.2f}, {z_max:.2f}], range={z_range:.2f}m")
-        print(f"[DEBUG] Z threshold (bottom 50% of range): {z_threshold:.2f}")
+        print(f"[DEBUG] LOCAL Z range: [{z_min:.2f}, {z_max:.2f}], range={z_range:.2f}m")
+        print(f"[DEBUG] Z threshold (70th percentile): {z_threshold:.2f}")
 
         # Filter by Z threshold
         height_mask = z_coords < z_threshold
