@@ -366,42 +366,76 @@ class RerunLogger:
 
             # Create mesh by triangulating the grid (similar to trianglemap.glsl)
             # Points are in CAMERA FRAME, will be transformed to world via Transform3D
+            # Use conservative thresholds to avoid blurry/stretched mesh:
+            # - slant_thresh=0.2 (higher = more aggressive filtering of grazing angles)
+            # - depth_discontinuity_thresh=0.3 (30% max depth variation in a quad)
             vertices, vertex_colors, triangles = self._create_mesh_from_pointmap(
-                X_grid, colors, conf_grid, conf_thresh
+                X_grid, colors, conf_grid, conf_thresh,
+                slant_thresh=0.2,
+                depth_discontinuity_thresh=0.3
             )
 
             if len(vertices) > 0:
-                # Log camera pose transformation (like m_model in OpenGL shader)
-                cam_log_path = f"{self.parent_log_path}/global_map/keyframe_{i}"
+                # Apply ceiling filter based on LOCAL Y-range in camera coordinates
+                # Each keyframe's mesh is filtered independently based on its own Y-distribution
+                y_coords = vertices[:, 1]  # Y in camera frame (vertical)
 
-                # Transform from camera frame to world frame using T_WC
-                se3_pose = as_SE3(keyframe.T_WC.cpu())
-                mat4x4 = se3_pose.matrix().numpy().astype(np.float32)[0]
+                # Remove bottom 42% of points by Y-value (42nd percentile)
+                # In camera coords, Y points DOWN, so low Y = ceiling, high Y = floor
+                y_threshold = np.percentile(y_coords, 42)
 
-                # Keep in OpenCV (RDF) convention - no conversion needed
-                # This matches the full-SLAM mode behavior (see log_keyframes method)
-                # World is RDF, points are in camera frame (RDF), so pose should also be RDF
+                # Keep vertices ABOVE threshold (higher Y = floor/walls, remove ceiling)
+                vertex_mask = y_coords > y_threshold
 
-                # Extract rotation (3x3) and translation (3,) from 4x4 matrix
-                rotation_matrix = mat4x4[:3, :3]
-                translation_vector = mat4x4[:3, 3]
+                # Filter vertices and colors
+                filtered_vertices = vertices[vertex_mask]
+                filtered_vertex_colors = vertex_colors[vertex_mask]
 
-                rr.log(
-                    cam_log_path,
-                    rr.Transform3D(translation=translation_vector, mat3x3=rotation_matrix)
-                )
+                # Create a mapping from old vertex indices to new vertex indices
+                old_to_new_idx = np.full(len(vertices), -1, dtype=np.int32)
+                old_to_new_idx[vertex_mask] = np.arange(np.sum(vertex_mask))
 
-                # Log mesh in camera frame (will be transformed by parent Transform3D)
-                rr.log(
-                    f"{cam_log_path}/mesh",
-                    rr.Mesh3D(
-                        vertex_positions=vertices,
-                        vertex_colors=vertex_colors,
-                        triangle_indices=triangles,
+                # Filter triangles: keep only triangles where ALL 3 vertices are kept
+                valid_triangles = []
+                for tri in triangles:
+                    new_tri = old_to_new_idx[tri]
+                    if np.all(new_tri >= 0):  # All 3 vertices survived filtering
+                        valid_triangles.append(new_tri)
+
+                if len(valid_triangles) > 0:
+                    filtered_triangles = np.array(valid_triangles, dtype=np.uint32)
+
+                    # Log camera pose transformation (like m_model in OpenGL shader)
+                    cam_log_path = f"{self.parent_log_path}/global_map/keyframe_{i}"
+
+                    # Transform from camera frame to world frame using T_WC
+                    se3_pose = as_SE3(keyframe.T_WC.cpu())
+                    mat4x4 = se3_pose.matrix().numpy().astype(np.float32)[0]
+
+                    # Keep in OpenCV (RDF) convention - no conversion needed
+                    # This matches the full-SLAM mode behavior (see log_keyframes method)
+                    # World is RDF, points are in camera frame (RDF), so pose should also be RDF
+
+                    # Extract rotation (3x3) and translation (3,) from 4x4 matrix
+                    rotation_matrix = mat4x4[:3, :3]
+                    translation_vector = mat4x4[:3, 3]
+
+                    rr.log(
+                        cam_log_path,
+                        rr.Transform3D(translation=translation_vector, mat3x3=rotation_matrix)
                     )
-                )
-                total_vertices += len(vertices)
-                total_triangles += len(triangles)
+
+                    # Log filtered mesh in camera frame (will be transformed by parent Transform3D)
+                    rr.log(
+                        f"{cam_log_path}/mesh",
+                        rr.Mesh3D(
+                            vertex_positions=filtered_vertices,
+                            vertex_colors=filtered_vertex_colors,
+                            triangle_indices=filtered_triangles,
+                        )
+                    )
+                    total_vertices += len(filtered_vertices)
+                    total_triangles += len(filtered_triangles)
 
         if total_vertices > 0:
             print(f"[RerunLogger] ✓ Logged global mesh: {total_vertices:,} vertices, {total_triangles:,} triangles from {len(keyframes)} keyframes")
@@ -450,7 +484,7 @@ class RerunLogger:
 
         return frame.X_canon.cpu().numpy().astype(np.float32)
 
-    def _create_mesh_from_pointmap(self, points, colors, conf, conf_thresh, slant_thresh=0.1):
+    def _create_mesh_from_pointmap(self, points, colors, conf, conf_thresh, slant_thresh=0.1, depth_discontinuity_thresh=0.5):
         """
         Create a triangle mesh from a H×W pointmap by connecting neighboring points.
         This replicates the trianglemap.glsl shader logic (lines 41-93).
@@ -459,6 +493,7 @@ class RerunLogger:
         1. Border pixels (10 pixel margin)
         2. Confidence threshold (all 4 corners must pass)
         3. Slant threshold (surface angle relative to camera ray)
+        4. Depth discontinuity (reject quads with large depth jumps)
 
         Args:
             points: (H, W, 3) array of 3D positions in camera frame
@@ -466,6 +501,7 @@ class RerunLogger:
             conf: (H, W) array of confidence values
             conf_thresh: confidence threshold for filtering
             slant_thresh: slant threshold for filtering grazing angles (default: 0.1)
+            depth_discontinuity_thresh: max relative depth difference between quad corners (default: 0.5 = 50%)
 
         Returns:
             vertices: (N, 3) array of vertex positions
@@ -512,12 +548,30 @@ class RerunLogger:
                 if conf[y, x] <= conf_thresh:
                     continue
 
-                # Slant threshold filtering (line 60-70 in trianglemap.glsl)
-                # Compute surface normals for the 2 triangles
+                # Get 4 corner points
                 p_tl = points[y, x]
                 p_tr = points[y, x + 1]
                 p_bl = points[y + 1, x]
                 p_br = points[y + 1, x + 1]
+
+                # Depth discontinuity filtering: reject quads with large depth jumps
+                # Compute depths (Z-coordinate in camera frame)
+                depths = np.array([
+                    np.linalg.norm(p_tl),
+                    np.linalg.norm(p_tr),
+                    np.linalg.norm(p_bl),
+                    np.linalg.norm(p_br)
+                ])
+
+                # Check relative depth variation: (max - min) / mean
+                depth_mean = np.mean(depths)
+                depth_variation = (np.max(depths) - np.min(depths)) / (depth_mean + 1e-8)
+
+                if depth_variation > depth_discontinuity_thresh:
+                    continue  # Skip this quad - depth discontinuity too large
+
+                # Slant threshold filtering (line 60-70 in trianglemap.glsl)
+                # Compute surface normals for the 2 triangles
 
                 # Normal for triangle 1 (TL, BL, TR)
                 n1 = np.cross(p_bl - p_tl, p_tr - p_tl)
