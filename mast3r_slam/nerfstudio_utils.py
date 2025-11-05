@@ -18,9 +18,7 @@ from mast3r_slam.mast3r_utils import frame_to_intir
 @serde
 class NSFrame:
     file_path: str
-    transform_matrix: Float32[
-        np.ndarray, "4 4"
-    ]  # 4x4 camera transformation matrix in OpenGL format
+    transform_matrix: list[list[float]]  # 4x4 camera transformation matrix in OpenGL format (as nested list)
     colmap_im_id: int
 
 
@@ -117,7 +115,7 @@ def save_kf_to_nerfstudio(
         ns_frames_list.append(
             NSFrame(
                 file_path=relative_image_path,
-                transform_matrix=mat4x4_gl,
+                transform_matrix=mat4x4_gl.tolist(),  # Convert numpy array to list for JSON serialization
                 colmap_im_id=i,
             )
         )

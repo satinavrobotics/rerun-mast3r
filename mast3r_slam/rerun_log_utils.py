@@ -200,14 +200,14 @@ class RerunLogger:
                     masked_positions = positions[conf_mask]
                     masked_colors = colors[conf_mask]
 
-                    # Filter out ceiling: keep only bottom 90% by height (Z-coordinate in camera frame)
+                    # Filter out ceiling: keep only bottom 58% by height (Z-coordinate in camera frame)
                     # In camera frame (RDF), Z points forward, Y points down, X points right
                     # We want to filter by Y (vertical) coordinate to remove ceiling
                     if len(masked_positions) > 0:
                         y_coords = masked_positions[:, 1]  # Y is vertical in camera frame
                         # Calculate 90th percentile of Y (higher Y = lower in scene since Y points down)
-                        # We want to keep points with Y >= 10th percentile (remove top 10% = ceiling)
-                        y_threshold = np.percentile(y_coords, 30)
+                        # We want to keep points with Y >= 42th percentile (remove top 42% = ceiling)
+                        y_threshold = np.percentile(y_coords, 42)
                         height_mask = y_coords >= y_threshold
 
                         masked_positions = masked_positions[height_mask]
