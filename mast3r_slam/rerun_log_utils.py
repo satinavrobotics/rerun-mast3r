@@ -48,85 +48,46 @@ class RerunLogger:
         self.keyframe_logged_list = []
         self.num_keyframes_logged = 0
         self.conf_thresh = 1.5  # Lowered from 7 to 1.5 for denser pointclouds
-
-        # For adaptive ceiling filtering: batch processing approach
-        self.pending_keyframes = []  # Store keyframe data for batch processing
-        self.batch_size = 10  # Process every 10 keyframes
         self.image_plane_distance = 0.2
+        self.ceiling_percentile = 85  # Remove top 15% of points (ceiling)
 
-    def _process_keyframe_batch(self):
-        """Process a batch of keyframes with adaptive ceiling filtering."""
-        if not self.pending_keyframes:
-            return
+    def _filter_ceiling_local(self, positions, colors, mat4x4):
+        """
+        Filter ceiling points from a single pointcloud based on its own local Z-range.
+        Removes the top percentile of points (ceiling) from this specific pointcloud.
 
-        print(f"[RerunLogger] Processing batch of {len(self.pending_keyframes)} keyframes...")
+        Args:
+            positions: Point positions in camera frame
+            colors: Point colors
+            mat4x4: Camera pose transformation matrix
 
-        # First pass: collect all Z-coordinates from this batch
-        all_z_coords = []
-        for kf_data in self.pending_keyframes:
-            positions = kf_data['positions']
-            conf_mask = kf_data['conf_mask']
-            mat4x4 = kf_data['mat4x4']
+        Returns:
+            Filtered positions and colors
+        """
+        if len(positions) == 0:
+            return positions, colors
 
-            masked_positions = positions[conf_mask]
-            if len(masked_positions) > 0:
-                # Transform to world coordinates
-                homogeneous_positions = np.ones((masked_positions.shape[0], 4), dtype=np.float32)
-                homogeneous_positions[:, :3] = masked_positions
-                world_positions = (mat4x4 @ homogeneous_positions.T).T[:, :3]
-                all_z_coords.append(world_positions[:, 2])
+        # Transform to world coordinates to get Z values
+        homogeneous_positions = np.ones((positions.shape[0], 4), dtype=np.float32)
+        homogeneous_positions[:, :3] = positions
+        world_positions = (mat4x4 @ homogeneous_positions.T).T[:, :3]
+        z_coords = world_positions[:, 2]  # Z is vertical in world frame
 
-        # Compute adaptive threshold from this batch
-        if all_z_coords:
-            all_z = np.concatenate(all_z_coords)
-            z_threshold = np.percentile(all_z, 85)  # 85th percentile
-            print(f"[RerunLogger] Batch adaptive ceiling threshold: Z < {z_threshold:.2f}m (85th percentile)")
-            print(f"[RerunLogger] Z-coord range: [{all_z.min():.2f}, {all_z.max():.2f}]")
-        else:
-            z_threshold = None
+        # Compute local adaptive threshold: remove top 15% (ceiling)
+        z_threshold = np.percentile(z_coords, self.ceiling_percentile)
 
-        # Second pass: filter and log each keyframe
-        for kf_data in self.pending_keyframes:
-            positions = kf_data['positions']
-            colors = kf_data['colors']
-            conf_mask = kf_data['conf_mask']
-            mat4x4 = kf_data['mat4x4']
-            cam_log_path = kf_data['cam_log_path']
+        # Filter by local Z threshold
+        height_mask = z_coords < z_threshold
+        filtered_positions = positions[height_mask]
+        filtered_colors = colors[height_mask]
 
-            masked_positions = positions[conf_mask]
-            masked_colors = colors[conf_mask]
+        # Debug info
+        points_removed = len(positions) - len(filtered_positions)
+        if points_removed > 0:
+            print(f"[RerunLogger] Filtered {points_removed}/{len(positions)} ceiling points "
+                  f"(Z < {z_threshold:.2f}m, range: [{z_coords.min():.2f}, {z_coords.max():.2f}])")
 
-            # Apply adaptive ceiling filter if we have a threshold
-            if z_threshold is not None and len(masked_positions) > 0:
-                # Transform to world coordinates
-                homogeneous_positions = np.ones((masked_positions.shape[0], 4), dtype=np.float32)
-                homogeneous_positions[:, :3] = masked_positions
-                world_positions = (mat4x4 @ homogeneous_positions.T).T[:, :3]
-                z_coords = world_positions[:, 2]
-
-                # Filter by adaptive Z threshold
-                height_mask = z_coords < z_threshold
-                masked_positions = masked_positions[height_mask]
-                masked_colors = masked_colors[height_mask]
-
-            # Log the filtered pointcloud
-            if len(masked_positions) > 0:
-                rr.log(
-                    f"{cam_log_path}/pointcloud",
-                    rr.Points3D(
-                        positions=masked_positions,
-                        colors=masked_colors,
-                    ),
-                )
-
-        # Clear the batch
-        self.pending_keyframes = []
-
-    def finalize_pointclouds(self):
-        """Process any remaining keyframes in the pending batch."""
-        if self.pending_keyframes:
-            print(f"[RerunLogger] Finalizing: processing remaining {len(self.pending_keyframes)} keyframes...")
-            self._process_keyframe_batch()
+        return filtered_positions, filtered_colors
 
     def log_frame(
         self, current_frame: Frame, keyframes: SharedKeyframes, states: SharedStates
@@ -268,21 +229,28 @@ class RerunLogger:
                     conf_mask = keyframe.C.cpu().numpy() > self.conf_thresh
                     conf_mask = conf_mask.squeeze()
 
-                    # Store keyframe data for batch processing
+                    # Get positions and colors
                     positions: Float32[np.ndarray, "num_points 3"] = keyframe.X_canon.cpu().numpy()
                     colors: UInt8[np.ndarray, "num_points 3"] = kf_img.reshape(-1, 3)
 
-                    self.pending_keyframes.append({
-                        'positions': positions,
-                        'colors': colors,
-                        'conf_mask': conf_mask,
-                        'mat4x4': mat4x4,
-                        'cam_log_path': cam_log_path,
-                    })
+                    # Apply confidence mask
+                    masked_positions = positions[conf_mask]
+                    masked_colors = colors[conf_mask]
 
-                    # Process batch every 10 keyframes
-                    if len(self.pending_keyframes) >= self.batch_size:
-                        self._process_keyframe_batch()
+                    # Filter ceiling based on local Z-range of this pointcloud
+                    filtered_positions, filtered_colors = self._filter_ceiling_local(
+                        masked_positions, masked_colors, mat4x4
+                    )
+
+                    # Log the filtered pointcloud immediately
+                    if len(filtered_positions) > 0:
+                        rr.log(
+                            f"{cam_log_path}/pointcloud",
+                            rr.Points3D(
+                                positions=filtered_positions,
+                                colors=filtered_colors,
+                            ),
+                        )
                 self.keyframe_logged_list.append(kf_idx)
             rr.log(
                 f"{cam_log_path}/pinhole",
