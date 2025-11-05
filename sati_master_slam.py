@@ -89,6 +89,7 @@ def main():
     # Custom Shaders Mode: Log mesh-based reconstruction (experimental)
     if cfg.custom_shaders and keyframes is not None:
         print(f"\n[Custom Shaders] Building mesh-based reconstruction (experimental)...")
+        print(f"\nTODO: Waiting for custom shaders support to be added to rerun-sdk")
 
         if not cfg.no_viz and cfg.rerun_server_addr:
             import rerun as rr
