@@ -200,16 +200,22 @@ class RerunLogger:
                     masked_positions = positions[conf_mask]
                     masked_colors = colors[conf_mask]
 
-                    # Filter out ceiling: keep only bottom 58% by height (Z-coordinate in camera frame)
-                    # In camera frame (RDF), Z points forward, Y points down, X points right
-                    # We want to filter by Y (vertical) coordinate to remove ceiling
+                    # Filter out ceiling using absolute Z threshold in world frame
+                    # Transform points to world coordinates first, then filter
                     if len(masked_positions) > 0:
-                        y_coords = masked_positions[:, 1]  # Y is vertical in camera frame
-                        # Calculate 90th percentile of Y (higher Y = lower in scene since Y points down)
-                        # We want to keep points with Y >= 42th percentile (remove top 42% = ceiling)
-                        y_threshold = np.percentile(y_coords, 42)
-                        height_mask = y_coords >= y_threshold
+                        # Convert to homogeneous coordinates
+                        homogeneous_positions = np.ones((masked_positions.shape[0], 4), dtype=np.float32)
+                        homogeneous_positions[:, :3] = masked_positions
 
+                        # Transform to world coordinates
+                        world_positions = (mat4x4 @ homogeneous_positions.T).T[:, :3]
+
+                        # Filter by absolute Z threshold (ground ~1.5-2.5m, ceiling ~7.4m)
+                        z_coords = world_positions[:, 2]  # Z is vertical in world frame
+                        height_mask = z_coords < 4.0  # Keep points below 4.0m to remove ceiling
+
+                        # Apply height filter and convert back to camera frame for logging
+                        # (Rerun will transform them back to world using the camera transform)
                         masked_positions = masked_positions[height_mask]
                         masked_colors = masked_colors[height_mask]
 

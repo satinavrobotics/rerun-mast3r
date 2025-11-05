@@ -100,19 +100,6 @@ def save_kf_to_nerfstudio(
         masked_positions = positions[mask]  # Now selects entire rows where mask is True
         masked_colors = colors[mask]
 
-        # Filter out ceiling: keep only bottom 58% by height (Y-coordinate in camera frame)
-        # In camera frame (RDF), Z points forward, Y points down, X points right
-        # We want to filter by Y (vertical) coordinate to remove ceiling
-        if len(masked_positions) > 0:
-            y_coords = masked_positions[:, 1]  # Y is vertical in camera frame
-            # Calculate percentile of Y (higher Y = lower in scene since Y points down)
-            # We want to keep points with Y >= 42th percentile (remove top 42% = ceiling)
-            y_threshold = np.percentile(y_coords, 42)
-            height_mask = y_coords >= y_threshold
-
-            masked_positions = masked_positions[height_mask]
-            masked_colors = masked_colors[height_mask]
-
         # Convert to homogeneous coordinates (add 1 as 4th coordinate)
         homogeneous_positions = np.ones(
             (masked_positions.shape[0], 4), dtype=np.float32
@@ -121,6 +108,16 @@ def save_kf_to_nerfstudio(
 
         # Apply transformation (points are column vectors: p_world = T_world_cam * p_cam)
         world_positions = (mat4x4_cv @ homogeneous_positions.T).T[:, :3]
+
+        # Filter out ceiling using absolute Z threshold in world frame
+        # Ground points are around Z=1.5-2.5, ceiling around Z=7.4
+        # Keep only points below Z=4.0 to remove ceiling
+        if len(world_positions) > 0:
+            z_coords = world_positions[:, 2]  # Z is vertical in world frame
+            height_mask = z_coords < 4.0  # Remove points above 4.0m height
+
+            world_positions = world_positions[height_mask]
+            masked_colors = masked_colors[height_mask]
 
         pcd_positions.append(world_positions)
         pcd_colors.append(masked_colors)
