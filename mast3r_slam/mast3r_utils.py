@@ -2,7 +2,7 @@ import PIL
 import numpy as np
 import torch
 import einops
-from typing import TYPE_CHECKING, Tuple
+from typing import TYPE_CHECKING, Tuple, Any
 
 import mast3r.utils.path_to_dust3r  # noqa
 from dust3r.utils.image import ImgNorm
@@ -12,8 +12,8 @@ from mast3r_slam.config import config
 import mast3r_slam.matching as matching
 from jaxtyping import Float32
 
-# Import Frame for runtime use (needed by beartype)
-from mast3r_slam.frame import Frame
+if TYPE_CHECKING:
+    from mast3r_slam.frame import Frame
 
 
 def load_mast3r(path=None, device="cuda"):
@@ -418,7 +418,7 @@ def estimate_focal_knowing_depth(
     return focal
 
 
-def frame_to_intir(frame: Frame) -> tuple[tuple[float, float], tuple[float, float]]:
+def frame_to_intir(frame: Any) -> tuple[tuple[float, float], tuple[float, float]]:
     H = frame.img_shape.squeeze()[0].item()
     W = frame.img_shape.squeeze()[1].item()
 

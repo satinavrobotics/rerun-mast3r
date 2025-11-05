@@ -166,6 +166,14 @@ class RerunLogger:
                 :3, 3
             ]  # Right column, first 3 elements
             cam_log_path = self.parent_log_path / "keyframes" / f"keyframe-{kf_idx}"
+
+            # IMPORTANT: Log the transform FIRST, before logging any child entities (image, pointcloud)
+            # This ensures that when the pointcloud is logged, it's already under the correct transform
+            rr.log(
+                f"{cam_log_path}",
+                rr.Transform3D(translation=translation_vector, mat3x3=rotation_matrix),
+            )
+
             if kf_idx not in self.keyframe_logged_list:
                 kf_img: Float32[torch.Tensor, "H W 3"] = keyframe.uimg
                 kf_img: UInt8[np.ndarray, "H W 3"] = (
@@ -198,10 +206,6 @@ class RerunLogger:
                         ),
                     )
                 self.keyframe_logged_list.append(kf_idx)
-            rr.log(
-                f"{cam_log_path}",
-                rr.Transform3D(translation=translation_vector, mat3x3=rotation_matrix),
-            )
             rr.log(
                 f"{cam_log_path}/pinhole",
                 rr.Pinhole(
