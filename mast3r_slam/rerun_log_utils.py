@@ -72,20 +72,22 @@ class RerunLogger:
         world_positions = (mat4x4 @ homogeneous_positions.T).T
         z_coords = world_positions[:, 2]  # Z is vertical in world frame
 
+        # ALWAYS print debug info to verify filtering is working
+        print(f"[DEBUG] Before filtering: {len(positions)} points, Z range: [{z_coords.min():.2f}, {z_coords.max():.2f}]")
+
         # Simple approach: remove top 20% of points by Z-value
         # This removes ceiling while keeping floor and walls
         z_threshold = np.percentile(z_coords, 80)  # Keep bottom 80%
+        print(f"[DEBUG] Z threshold (80th percentile): {z_threshold:.2f}")
 
         # Filter by Z threshold
         height_mask = z_coords < z_threshold
         filtered_positions = positions[height_mask]
         filtered_colors = colors[height_mask]
 
-        # Debug info (only print if significant filtering happened)
+        # Debug info
         points_removed = len(positions) - len(filtered_positions)
-        if points_removed > 100:  # Only log if we removed significant points
-            print(f"[RerunLogger] Removed {points_removed}/{len(positions)} ceiling points "
-                  f"(Z < {z_threshold:.2f}m, range: [{z_coords.min():.2f}, {z_coords.max():.2f}])")
+        print(f"[DEBUG] After filtering: {len(filtered_positions)} points, removed {points_removed} points")
 
         return filtered_positions, filtered_colors
 
