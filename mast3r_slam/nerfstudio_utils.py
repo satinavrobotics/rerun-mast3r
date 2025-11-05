@@ -38,7 +38,7 @@ class NerfstudioData:
     p2: float
     camera_model: Literal["OPENCV"]
     frames: list[NSFrame]
-    applied_transform: Float32[np.ndarray, "3 4"]
+    applied_transform: list[list[float]]  # 3x4 matrix as nested list
     ply_file_path: Literal["sparse_pc.ply"]
 
 
@@ -158,7 +158,7 @@ def save_kf_to_nerfstudio(
         p2=0.0,
         camera_model="OPENCV",
         frames=ns_frames_list,
-        applied_transform=np.eye(3, 4, dtype=np.float32),
+        applied_transform=np.eye(3, 4, dtype=np.float32).tolist(),  # Convert to list for JSON serialization
         ply_file_path="sparse_pc.ply",
     )
     json_str: str = to_json(ns_data)

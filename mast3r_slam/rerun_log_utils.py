@@ -187,24 +187,40 @@ class RerunLogger:
                 # Log per-keyframe pointcloud only if --full-slam is enabled
                 if self.log_pointclouds:
                     # Create a mask based on the confidence values
-                    mask = keyframe.C.cpu().numpy() > self.conf_thresh
+                    conf_mask = keyframe.C.cpu().numpy() > self.conf_thresh
 
                     # Convert the mask from shape (h*w, 1) to shape (h*w,)
-                    mask = mask.squeeze()  # Remove the trailing dimension to get a 1D boolean array
+                    conf_mask = conf_mask.squeeze()  # Remove the trailing dimension to get a 1D boolean array
 
                     # Now apply the mask to both positions and colors
                     positions: Float32[np.ndarray, "num_points 3"] = keyframe.X_canon.cpu().numpy()
                     colors: UInt8[np.ndarray, "num_points 3"] = kf_img.reshape(-1, 3)
 
-                    masked_positions = positions[mask]  # Now selects entire rows where mask is True
-                    masked_colors = colors[mask]
-                    rr.log(
-                        f"{cam_log_path}/pointcloud",
-                        rr.Points3D(
-                            positions=masked_positions,
-                            colors=masked_colors,
-                        ),
-                    )
+                    # Apply confidence mask first
+                    masked_positions = positions[conf_mask]
+                    masked_colors = colors[conf_mask]
+
+                    # Filter out ceiling: keep only bottom 90% by height (Z-coordinate in camera frame)
+                    # In camera frame (RDF), Z points forward, Y points down, X points right
+                    # We want to filter by Y (vertical) coordinate to remove ceiling
+                    if len(masked_positions) > 0:
+                        y_coords = masked_positions[:, 1]  # Y is vertical in camera frame
+                        # Calculate 90th percentile of Y (higher Y = lower in scene since Y points down)
+                        # We want to keep points with Y >= 10th percentile (remove top 10% = ceiling)
+                        y_threshold = np.percentile(y_coords, 10)
+                        height_mask = y_coords >= y_threshold
+
+                        masked_positions = masked_positions[height_mask]
+                        masked_colors = masked_colors[height_mask]
+
+                    if len(masked_positions) > 0:
+                        rr.log(
+                            f"{cam_log_path}/pointcloud",
+                            rr.Points3D(
+                                positions=masked_positions,
+                                colors=masked_colors,
+                            ),
+                        )
                 self.keyframe_logged_list.append(kf_idx)
             rr.log(
                 f"{cam_log_path}/pinhole",
