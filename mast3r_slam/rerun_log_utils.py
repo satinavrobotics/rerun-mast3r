@@ -48,6 +48,10 @@ class RerunLogger:
         self.keyframe_logged_list = []
         self.num_keyframes_logged = 0
         self.conf_thresh = 1.5  # Lowered from 7 to 1.5 for denser pointclouds
+
+        # For adaptive ceiling filtering: collect Z-coords to compute running threshold
+        self.all_z_coords = []  # Running list of all Z-coordinates seen so far
+        self.z_threshold = None  # Adaptive threshold, updated periodically
         self.image_plane_distance = 0.2
 
     def log_frame(
@@ -200,7 +204,7 @@ class RerunLogger:
                     masked_positions = positions[conf_mask]
                     masked_colors = colors[conf_mask]
 
-                    # Filter out ceiling using absolute Z threshold in world frame
+                    # Filter out ceiling using adaptive Z threshold in world frame
                     # Transform points to world coordinates first, then filter
                     if len(masked_positions) > 0:
                         # Convert to homogeneous coordinates
@@ -209,10 +213,19 @@ class RerunLogger:
 
                         # Transform to world coordinates
                         world_positions = (mat4x4 @ homogeneous_positions.T).T[:, :3]
-
-                        # Filter by absolute Z threshold (ground ~1.5-2.5m, ceiling ~7.4m)
                         z_coords = world_positions[:, 2]  # Z is vertical in world frame
-                        height_mask = z_coords < 4.0  # Keep points below 4.0m to remove ceiling
+
+                        # Collect Z-coords for adaptive threshold computation
+                        self.all_z_coords.append(z_coords)
+
+                        # Update adaptive threshold every 10 keyframes
+                        if len(self.all_z_coords) % 10 == 0 or self.z_threshold is None:
+                            all_z = np.concatenate(self.all_z_coords)
+                            self.z_threshold = np.percentile(all_z, 70)  # 70th percentile
+                            print(f"[RerunLogger] Updated adaptive ceiling threshold: Z < {self.z_threshold:.2f}m (70th percentile, {len(all_z)} points)")
+
+                        # Filter by adaptive Z threshold
+                        height_mask = z_coords < self.z_threshold
 
                         # Apply height filter and convert back to camera frame for logging
                         # (Rerun will transform them back to world using the camera transform)
