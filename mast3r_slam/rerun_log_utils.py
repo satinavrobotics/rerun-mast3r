@@ -49,7 +49,7 @@ class RerunLogger:
         self.num_keyframes_logged = 0
         self.conf_thresh = 1.5  # Lowered from 7 to 1.5 for denser pointclouds
         self.image_plane_distance = 0.2
-        self.ceiling_percentile = 50  # Remove top 50% of points (ceiling) - more aggressive
+        self.ceiling_percentile = 90  # Remove top 50% of points (ceiling) - more aggressive
 
     def _filter_ceiling_local(self, positions, colors, mat4x4):
         """
