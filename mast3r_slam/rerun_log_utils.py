@@ -49,12 +49,11 @@ class RerunLogger:
         self.num_keyframes_logged = 0
         self.conf_thresh = 1.5  # Lowered from 7 to 1.5 for denser pointclouds
         self.image_plane_distance = 0.2
-        self.ceiling_percentile = 90  # Remove top 50% of points (ceiling) - more aggressive
 
     def _filter_ceiling_local(self, positions, colors, mat4x4):
         """
-        Filter ceiling points from a single pointcloud based on its own local Z-range.
-        Removes the top percentile of points (ceiling) from this specific pointcloud.
+        Memory-efficient ceiling filter: removes top 20% of points by Z-value.
+        Each pointcloud is filtered independently based on its own Z-range.
 
         Args:
             positions: Point positions in camera frame
@@ -67,24 +66,25 @@ class RerunLogger:
         if len(positions) == 0:
             return positions, colors
 
-        # Transform to world coordinates to get Z values
+        # Transform to world coordinates to get Z values (only Z column needed)
         homogeneous_positions = np.ones((positions.shape[0], 4), dtype=np.float32)
         homogeneous_positions[:, :3] = positions
-        world_positions = (mat4x4 @ homogeneous_positions.T).T[:, :3]
+        world_positions = (mat4x4 @ homogeneous_positions.T).T
         z_coords = world_positions[:, 2]  # Z is vertical in world frame
 
-        # Compute local adaptive threshold: remove top 15% (ceiling)
-        z_threshold = np.percentile(z_coords, self.ceiling_percentile)
+        # Simple approach: remove top 20% of points by Z-value
+        # This removes ceiling while keeping floor and walls
+        z_threshold = np.percentile(z_coords, 80)  # Keep bottom 80%
 
-        # Filter by local Z threshold
+        # Filter by Z threshold
         height_mask = z_coords < z_threshold
         filtered_positions = positions[height_mask]
         filtered_colors = colors[height_mask]
 
-        # Debug info
+        # Debug info (only print if significant filtering happened)
         points_removed = len(positions) - len(filtered_positions)
-        if points_removed > 0:
-            print(f"[RerunLogger] Filtered {points_removed}/{len(positions)} ceiling points "
+        if points_removed > 100:  # Only log if we removed significant points
+            print(f"[RerunLogger] Removed {points_removed}/{len(positions)} ceiling points "
                   f"(Z < {z_threshold:.2f}m, range: [{z_coords.min():.2f}, {z_coords.max():.2f}])")
 
         return filtered_positions, filtered_colors
