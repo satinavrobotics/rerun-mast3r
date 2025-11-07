@@ -50,7 +50,7 @@ class RerunLogger:
         self.keyframe_logged_list = []
         self.global_map_logged_list = []  # Track which keyframes have been logged as meshes (custom shaders mode)
         self.num_keyframes_logged = 0
-        self.conf_thresh = 2.0  # Lowered from 1.5 to 0.5 for denser pointclouds
+        self.conf_thresh = 3.0  # Lowered from 1.5 to 0.5 for denser pointclouds
         self.image_plane_distance = 0.2
 
     def _filter_ceiling_local(self, positions, colors, mat4x4):
