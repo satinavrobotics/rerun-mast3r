@@ -50,7 +50,7 @@ class RerunLogger:
         self.keyframe_logged_list = []
         self.global_map_logged_list = []  # Track which keyframes have been logged as meshes (custom shaders mode)
         self.num_keyframes_logged = 0
-        self.conf_thresh = 0.5  # Lowered from 1.5 to 0.5 for much denser pointclouds
+        self.conf_thresh = 0.5  # Lowered from 1.5 to 0.5 for denser pointclouds
         self.image_plane_distance = 0.2
 
     def _filter_ceiling_local(self, positions, colors, mat4x4):
@@ -239,7 +239,7 @@ class RerunLogger:
                     conf_mask = keyframe.C.cpu().numpy() > self.conf_thresh
                     conf_mask = conf_mask.squeeze()
 
-                    # Get positions and colors
+                    # Get positions and colors (in camera frame)
                     positions: Float32[np.ndarray, "num_points 3"] = keyframe.X_canon.cpu().numpy()
                     colors: UInt8[np.ndarray, "num_points 3"] = kf_img.reshape(-1, 3)
 
@@ -252,24 +252,12 @@ class RerunLogger:
                         masked_positions, masked_colors, mat4x4
                     )
 
-                    # Transform points from camera frame to world frame
-                    # This is CRITICAL for correct visualization - same as nerfstudio_utils.py
+                    # Log pointcloud in camera frame (Rerun's Transform3D will handle world transform)
                     if len(filtered_positions) > 0:
-                        # Convert to homogeneous coordinates (add 1 as 4th coordinate)
-                        homogeneous_positions = np.ones(
-                            (filtered_positions.shape[0], 4), dtype=np.float32
-                        )
-                        homogeneous_positions[:, :3] = filtered_positions
-
-                        # Apply transformation: p_world = T_world_cam * p_cam
-                        # mat4x4 is already in RDF (OpenCV) convention
-                        world_positions = (mat4x4 @ homogeneous_positions.T).T[:, :3]
-
-                        # Log the transformed pointcloud in world frame
                         rr.log(
                             f"{cam_log_path}/pointcloud",
                             rr.Points3D(
-                                positions=world_positions,
+                                positions=filtered_positions,
                                 colors=filtered_colors,
                             ),
                         )
@@ -578,8 +566,8 @@ class RerunLogger:
                 p_br = points[y + 1, x + 1]
 
                 # Depth discontinuity filtering: reject quads with large depth jumps
-                # Compute depths (Z-coordinate in camera frame, NOT Euclidean distance)
-                depths = np.array([
+                # Compute depths (Z-coordinate in camera frame)
+                depths = np.array([                  
                     p_tl[2],  # Z-coordinate = depth along camera axis
                     p_tr[2],
                     p_bl[2],
