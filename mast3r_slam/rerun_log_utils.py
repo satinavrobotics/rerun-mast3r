@@ -185,16 +185,10 @@ class RerunLogger:
             N_keyframes = len(keyframes)
             dirty_idx = keyframes.get_dirty_idx()
 
-        # Only process new keyframes (not dirty ones)
-        # FIX: Don't update Transform3D when backend optimizes poses
-        # Keep points in camera frame, log Transform3D only once at keyframe creation
-        # This prevents slipping caused by updated T_WC being applied to stale X_canon
-        keyframes_to_process = []
+        # Process ALL keyframes to update Transform3D with latest optimized poses
+        # But only log pointcloud/image ONCE for new keyframes
+        # This is the key: Transform3D must be updated every frame to reflect backend optimization
         for kf_idx in range(N_keyframes):
-            if kf_idx not in self.keyframe_logged_list:
-                keyframes_to_process.append(kf_idx)
-
-        for kf_idx in keyframes_to_process:
             keyframe: Frame = keyframes[kf_idx]
             se3_pose: lietorch.SE3 = as_SE3(keyframe.T_WC.cpu())
             matb4x4: Float32[np.ndarray, "1 4 4"] = (
@@ -216,65 +210,69 @@ class RerunLogger:
             ]  # Right column, first 3 elements
             cam_log_path = self.parent_log_path / "keyframes" / f"keyframe-{kf_idx}"
 
-            # Log camera pose transformation ONCE (never update when backend optimizes)
+            # Log static content (image, pointcloud, pinhole) ONCE for new keyframes
+            if kf_idx not in self.keyframe_logged_list:
+                # Log image
+                kf_img: Float32[torch.Tensor, "H W 3"] = keyframe.uimg
+                kf_img: UInt8[np.ndarray, "H W 3"] = (
+                    (kf_img * 255).numpy().astype(np.uint8)
+                )
+                rr.log(
+                    f"{cam_log_path}/pinhole/image",
+                    rr.Image(image=kf_img, color_model=rr.ColorModel.RGB).compress(),
+                )
+
+                # Log per-keyframe pointcloud only if --full-slam is enabled
+                if self.log_pointclouds:
+                    # Create a mask based on the confidence values
+                    conf_mask = keyframe.C.cpu().numpy() > self.conf_thresh
+                    conf_mask = conf_mask.squeeze()
+
+                    # Get positions in camera frame
+                    positions: Float32[np.ndarray, "num_points 3"] = keyframe.X_canon.cpu().numpy()
+                    colors: UInt8[np.ndarray, "num_points 3"] = kf_img.reshape(-1, 3)
+
+                    # Apply confidence mask
+                    masked_positions = positions[conf_mask]
+                    masked_colors = colors[conf_mask]
+
+                    # Filter ceiling based on local Y-range of this pointcloud (in camera frame)
+                    filtered_positions, filtered_colors = self._filter_ceiling_local(
+                        masked_positions, masked_colors, mat4x4
+                    )
+
+                    # Log pointcloud in camera frame (Transform3D will handle world transform)
+                    if len(filtered_positions) > 0:
+                        rr.log(
+                            f"{cam_log_path}/pointcloud",
+                            rr.Points3D(
+                                positions=filtered_positions,
+                                colors=filtered_colors,
+                            ),
+                        )
+
+                # Log pinhole camera parameters
+                rr.log(
+                    f"{cam_log_path}/pinhole",
+                    rr.Pinhole(
+                        focal_length=focal,
+                        principal_point=pp.numpy(),
+                        height=H,
+                        width=W,
+                        camera_xyz=rr.ViewCoordinates.RDF,  # OpenCV convention (matches world coordinate system)
+                        image_plane_distance=self.image_plane_distance,
+                    ),
+                )
+
+                self.keyframe_logged_list.append(kf_idx)
+
+            # ALWAYS update Transform3D with latest optimized pose (even for existing keyframes)
+            # This is critical: when backend optimizes poses, we need to update the transform
+            # so the pointcloud (which stays in camera frame) gets positioned correctly
             rr.log(
                 f"{cam_log_path}",
                 rr.Transform3D(translation=translation_vector, mat3x3=rotation_matrix),
             )
-
-            # Log image
-            kf_img: Float32[torch.Tensor, "H W 3"] = keyframe.uimg
-            kf_img: UInt8[np.ndarray, "H W 3"] = (
-                (kf_img * 255).numpy().astype(np.uint8)
-            )
-            rr.log(
-                f"{cam_log_path}/pinhole/image",
-                rr.Image(image=kf_img, color_model=rr.ColorModel.RGB).compress(),
-            )
-
-            # Log per-keyframe pointcloud only if --full-slam is enabled
-            if self.log_pointclouds:
-                # Create a mask based on the confidence values
-                conf_mask = keyframe.C.cpu().numpy() > self.conf_thresh
-                conf_mask = conf_mask.squeeze()
-
-                # Get positions in camera frame
-                positions: Float32[np.ndarray, "num_points 3"] = keyframe.X_canon.cpu().numpy()
-                colors: UInt8[np.ndarray, "num_points 3"] = kf_img.reshape(-1, 3)
-
-                # Apply confidence mask
-                masked_positions = positions[conf_mask]
-                masked_colors = colors[conf_mask]
-
-                # Filter ceiling based on local Y-range of this pointcloud (in camera frame)
-                filtered_positions, filtered_colors = self._filter_ceiling_local(
-                    masked_positions, masked_colors, mat4x4
-                )
-
-                # Log pointcloud in camera frame (Transform3D will handle world transform)
-                if len(filtered_positions) > 0:
-                    rr.log(
-                        f"{cam_log_path}/pointcloud",
-                        rr.Points3D(
-                            positions=filtered_positions,
-                            colors=filtered_colors,
-                        ),
-                    )
-
-            # Log pinhole camera parameters
-            rr.log(
-                f"{cam_log_path}/pinhole",
-                rr.Pinhole(
-                    focal_length=focal,
-                    principal_point=pp.numpy(),
-                    height=H,
-                    width=W,
-                    camera_xyz=rr.ViewCoordinates.RDF,  # OpenCV convention (matches world coordinate system)
-                    image_plane_distance=self.image_plane_distance,
-                ),
-            )
-
-            self.keyframe_logged_list.append(kf_idx)
 
         # log the last keyframe image
         if N_keyframes > 0:
