@@ -185,12 +185,12 @@ class RerunLogger:
             N_keyframes = len(keyframes)
             dirty_idx = keyframes.get_dirty_idx()
 
-        # Only process new keyframes or dirty (updated) keyframes to avoid O(N²) complexity
-        # New keyframes: not yet logged (not in self.keyframe_logged_list)
-        # Dirty keyframes: poses updated by backend optimization (in dirty_idx)
+        # Only process new keyframes (not dirty ones)
+        # Option 2: Transform points to world frame ONCE using initial T_WC, never update
+        # This avoids slipping caused by applying updated T_WC to stale X_canon
         keyframes_to_process = []
         for kf_idx in range(N_keyframes):
-            if kf_idx not in self.keyframe_logged_list or kf_idx in dirty_idx:
+            if kf_idx not in self.keyframe_logged_list:
                 keyframes_to_process.append(kf_idx)
 
         for kf_idx in keyframes_to_process:
@@ -216,52 +216,63 @@ class RerunLogger:
             cam_log_path = self.parent_log_path / "keyframes" / f"keyframe-{kf_idx}"
 
             # Log camera pose transformation for visualization (frustum, pinhole camera)
-            # Note: Pointclouds are now logged in world frame (transformed explicitly),
-            # so they don't rely on this Transform3D
             rr.log(
                 f"{cam_log_path}",
                 rr.Transform3D(translation=translation_vector, mat3x3=rotation_matrix),
             )
 
-            if kf_idx not in self.keyframe_logged_list:
-                kf_img: Float32[torch.Tensor, "H W 3"] = keyframe.uimg
-                kf_img: UInt8[np.ndarray, "H W 3"] = (
-                    (kf_img * 255).numpy().astype(np.uint8)
+            # Log image and pointcloud (only for new keyframes, never update)
+            kf_img: Float32[torch.Tensor, "H W 3"] = keyframe.uimg
+            kf_img: UInt8[np.ndarray, "H W 3"] = (
+                (kf_img * 255).numpy().astype(np.uint8)
+            )
+            rr.log(
+                f"{cam_log_path}/pinhole/image",
+                rr.Image(image=kf_img, color_model=rr.ColorModel.RGB).compress(),
+            )
+
+            # Log per-keyframe pointcloud only if --full-slam is enabled
+            if self.log_pointclouds:
+                # Create a mask based on the confidence values
+                conf_mask = keyframe.C.cpu().numpy() > self.conf_thresh
+                conf_mask = conf_mask.squeeze()
+
+                # Get positions in camera frame
+                positions_cam: Float32[np.ndarray, "num_points 3"] = keyframe.X_canon.cpu().numpy()
+                colors: UInt8[np.ndarray, "num_points 3"] = kf_img.reshape(-1, 3)
+
+                # Apply confidence mask
+                masked_positions_cam = positions_cam[conf_mask]
+                masked_colors = colors[conf_mask]
+
+                # Transform points to world frame ONCE using initial T_WC
+                # This avoids slipping when backend updates T_WC later
+                # Convert to homogeneous coordinates (N, 4)
+                homogeneous_positions = np.hstack([
+                    masked_positions_cam,
+                    np.ones((len(masked_positions_cam), 1), dtype=np.float32)
+                ])
+
+                # Transform to world frame: P_world = T_WC @ P_cam
+                world_positions = (mat4x4 @ homogeneous_positions.T).T[:, :3]
+
+                # Filter ceiling based on world Y-coordinate
+                filtered_positions, filtered_colors = self._filter_ceiling_local(
+                    world_positions, masked_colors, mat4x4
                 )
-                rr.log(
-                    f"{cam_log_path}/pinhole/image",
-                    rr.Image(image=kf_img, color_model=rr.ColorModel.RGB).compress(),
-                )
 
-                # Log per-keyframe pointcloud only if --full-slam is enabled
-                if self.log_pointclouds:
-                    # Create a mask based on the confidence values
-                    conf_mask = keyframe.C.cpu().numpy() > self.conf_thresh
-                    conf_mask = conf_mask.squeeze()
-
-                    # Get positions and colors (in camera frame)
-                    positions: Float32[np.ndarray, "num_points 3"] = keyframe.X_canon.cpu().numpy()
-                    colors: UInt8[np.ndarray, "num_points 3"] = kf_img.reshape(-1, 3)
-
-                    # Apply confidence mask
-                    masked_positions = positions[conf_mask]
-                    masked_colors = colors[conf_mask]
-
-                    # Filter ceiling based on local Y-range of this pointcloud (in camera frame)
-                    filtered_positions, filtered_colors = self._filter_ceiling_local(
-                        masked_positions, masked_colors, mat4x4
+                # Log pointcloud in WORLD frame (no Transform3D needed)
+                # Points are already in world coordinates, so log them at world root
+                if len(filtered_positions) > 0:
+                    rr.log(
+                        f"{self.parent_log_path}/keyframes/keyframe-{kf_idx}/pointcloud_world",
+                        rr.Points3D(
+                            positions=filtered_positions,
+                            colors=filtered_colors,
+                        ),
                     )
 
-                    # Log pointcloud in camera frame (Rerun's Transform3D will handle world transform)
-                    if len(filtered_positions) > 0:
-                        rr.log(
-                            f"{cam_log_path}/pointcloud",
-                            rr.Points3D(
-                                positions=filtered_positions,
-                                colors=filtered_colors,
-                            ),
-                        )
-                self.keyframe_logged_list.append(kf_idx)
+            # Log pinhole camera parameters
             rr.log(
                 f"{cam_log_path}/pinhole",
                 rr.Pinhole(
@@ -273,6 +284,8 @@ class RerunLogger:
                     image_plane_distance=self.image_plane_distance,
                 ),
             )
+
+            self.keyframe_logged_list.append(kf_idx)
 
         # log the last keyframe image
         if N_keyframes > 0:
