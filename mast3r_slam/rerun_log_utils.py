@@ -50,8 +50,14 @@ class RerunLogger:
         self.keyframe_logged_list = []
         self.global_map_logged_list = []  # Track which keyframes have been logged as meshes (custom shaders mode)
         self.num_keyframes_logged = 0
-        self.conf_thresh = 4.0  # Lowered from 1.5 to 0.5 for denser pointclouds
+        self.conf_thresh = 1.0  # Confidence threshold for point filtering
         self.image_plane_distance = 0.2
+
+        # Depth filtering: Only log points within this depth range (in camera frame)
+        # Z-axis in camera frame is depth (forward direction)
+        # This prevents long streaks extending far behind the camera
+        self.min_depth = 0.1  # Minimum depth in meters (avoid points too close/behind camera)
+        self.max_depth = 5.0  # Maximum depth in meters (constrain to robot's perimeter)
 
     def _filter_ceiling_local(self, positions, colors, mat4x4):
         """
@@ -244,9 +250,18 @@ class RerunLogger:
                     masked_positions = positions[conf_mask]
                     masked_colors = colors[conf_mask]
 
+                    # CRITICAL: Filter by depth (Z-axis in camera frame)
+                    # Only keep points within robot's perimeter (e.g., 0.1m to 5m)
+                    # This prevents long streaks extending far from camera
+                    depth_values = masked_positions[:, 2]  # Z-coordinate is depth
+                    depth_mask = (depth_values >= self.min_depth) & (depth_values <= self.max_depth)
+
+                    depth_filtered_positions = masked_positions[depth_mask]
+                    depth_filtered_colors = masked_colors[depth_mask]
+
                     # Filter ceiling based on local Y-range of this pointcloud (in camera frame)
                     filtered_positions, filtered_colors = self._filter_ceiling_local(
-                        masked_positions, masked_colors, mat4x4
+                        depth_filtered_positions, depth_filtered_colors, mat4x4
                     )
 
                     # Log pointcloud in camera frame (Transform3D will handle world transform)
