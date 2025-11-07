@@ -50,14 +50,14 @@ class RerunLogger:
         self.keyframe_logged_list = []
         self.global_map_logged_list = []  # Track which keyframes have been logged as meshes (custom shaders mode)
         self.num_keyframes_logged = 0
-        self.conf_thresh = 1.0  # Confidence threshold for point filtering
+        self.conf_thresh = 7.0 # Confidence threshold for point filtering
         self.image_plane_distance = 0.2
 
         # Depth filtering: Only log points within this depth range (in camera frame)
         # Z-axis in camera frame is depth (forward direction)
         # This prevents long streaks extending far behind the camera
         self.min_depth = 0.1  # Minimum depth in meters (avoid points too close/behind camera)
-        self.max_depth = 3.0  # Maximum depth in meters (tighter constraint for cleaner reconstruction)
+        self.max_depth = 5.0  # Maximum depth in meters (tighter constraint for cleaner reconstruction)
 
         # Localization filtering: Only show pointclouds for well-localized keyframes
         # Keyframes with N_updates >= min_updates have been refined by tracking/optimization
@@ -223,29 +223,25 @@ class RerunLogger:
             cam_log_path = self.parent_log_path / "keyframes" / f"keyframe-{kf_idx}"
 
             is_new_keyframe = kf_idx not in self.keyframe_logged_list
-            is_dirty_keyframe = kf_idx in dirty_set
 
-            # Check if keyframe is well-localized (has been updated by tracking/optimization)
-            is_localized = keyframe.N_updates >= self.min_updates_for_display
-
-            # Log static content for new keyframes OR re-log pointcloud for dirty keyframes
-            if is_new_keyframe or (is_dirty_keyframe and self.log_pointclouds):
+            # Log static content (image, pointcloud, pinhole) ONCE for new keyframes
+            # NEVER re-log for dirty keyframes - this matches original rerun-io implementation
+            if is_new_keyframe:
                 # Get image (needed for colors)
                 kf_img: Float32[torch.Tensor, "H W 3"] = keyframe.uimg
                 kf_img: UInt8[np.ndarray, "H W 3"] = (
                     (kf_img * 255).numpy().astype(np.uint8)
                 )
 
-                # Log image only for new keyframes (not dirty)
-                if is_new_keyframe:
-                    rr.log(
-                        f"{cam_log_path}/pinhole/image",
-                        rr.Image(image=kf_img, color_model=rr.ColorModel.RGB).compress(),
-                    )
+                # Log image
+                rr.log(
+                    f"{cam_log_path}/pinhole/image",
+                    rr.Image(image=kf_img, color_model=rr.ColorModel.RGB).compress(),
+                )
 
-                # Log/re-log pointcloud ONLY for well-localized keyframes (if --full-slam enabled)
-                # This prevents showing uncertain/unoptimized pointclouds that cause slipping
-                if self.log_pointclouds and is_localized:
+                # Log pointcloud ONCE (if --full-slam enabled)
+                # Use high conf_thresh (7.0) and depth filtering to get only high-quality points
+                if self.log_pointclouds:
                     # Create a mask based on the confidence values
                     conf_mask = keyframe.C.cpu().numpy() > self.conf_thresh
                     conf_mask = conf_mask.squeeze()
@@ -298,14 +294,6 @@ class RerunLogger:
                     )
 
                     self.keyframe_logged_list.append(kf_idx)
-
-            # Hide pointcloud for unlocalized keyframes (clear by logging empty pointcloud)
-            elif self.log_pointclouds and not is_localized and kf_idx in self.keyframe_logged_list:
-                # Keyframe exists but is not yet well-localized - hide its pointcloud
-                rr.log(
-                    f"{cam_log_path}/pointcloud",
-                    rr.Points3D(positions=[], colors=[]),
-                )
 
             # ALWAYS update Transform3D with latest optimized pose (even for existing keyframes)
             # This is critical: when backend optimizes poses, we need to update the transform
