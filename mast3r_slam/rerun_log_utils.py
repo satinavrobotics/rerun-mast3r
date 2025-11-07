@@ -186,8 +186,9 @@ class RerunLogger:
             dirty_idx = keyframes.get_dirty_idx()
 
         # Only process new keyframes (not dirty ones)
-        # Option 2: Transform points to world frame ONCE using initial T_WC, never update
-        # This avoids slipping caused by applying updated T_WC to stale X_canon
+        # FIX: Don't update Transform3D when backend optimizes poses
+        # Keep points in camera frame, log Transform3D only once at keyframe creation
+        # This prevents slipping caused by updated T_WC being applied to stale X_canon
         keyframes_to_process = []
         for kf_idx in range(N_keyframes):
             if kf_idx not in self.keyframe_logged_list:
@@ -215,13 +216,13 @@ class RerunLogger:
             ]  # Right column, first 3 elements
             cam_log_path = self.parent_log_path / "keyframes" / f"keyframe-{kf_idx}"
 
-            # Log camera pose transformation for visualization (frustum, pinhole camera)
+            # Log camera pose transformation ONCE (never update when backend optimizes)
             rr.log(
                 f"{cam_log_path}",
                 rr.Transform3D(translation=translation_vector, mat3x3=rotation_matrix),
             )
 
-            # Log image and pointcloud (only for new keyframes, never update)
+            # Log image
             kf_img: Float32[torch.Tensor, "H W 3"] = keyframe.uimg
             kf_img: UInt8[np.ndarray, "H W 3"] = (
                 (kf_img * 255).numpy().astype(np.uint8)
@@ -238,34 +239,22 @@ class RerunLogger:
                 conf_mask = conf_mask.squeeze()
 
                 # Get positions in camera frame
-                positions_cam: Float32[np.ndarray, "num_points 3"] = keyframe.X_canon.cpu().numpy()
+                positions: Float32[np.ndarray, "num_points 3"] = keyframe.X_canon.cpu().numpy()
                 colors: UInt8[np.ndarray, "num_points 3"] = kf_img.reshape(-1, 3)
 
                 # Apply confidence mask
-                masked_positions_cam = positions_cam[conf_mask]
+                masked_positions = positions[conf_mask]
                 masked_colors = colors[conf_mask]
 
-                # Transform points to world frame ONCE using initial T_WC
-                # This avoids slipping when backend updates T_WC later
-                # Convert to homogeneous coordinates (N, 4)
-                homogeneous_positions = np.hstack([
-                    masked_positions_cam,
-                    np.ones((len(masked_positions_cam), 1), dtype=np.float32)
-                ])
-
-                # Transform to world frame: P_world = T_WC @ P_cam
-                world_positions = (mat4x4 @ homogeneous_positions.T).T[:, :3]
-
-                # Filter ceiling based on world Y-coordinate
+                # Filter ceiling based on local Y-range of this pointcloud (in camera frame)
                 filtered_positions, filtered_colors = self._filter_ceiling_local(
-                    world_positions, masked_colors, mat4x4
+                    masked_positions, masked_colors, mat4x4
                 )
 
-                # Log pointcloud in WORLD frame (no Transform3D needed)
-                # Points are already in world coordinates, so log them at world root
+                # Log pointcloud in camera frame (Transform3D will handle world transform)
                 if len(filtered_positions) > 0:
                     rr.log(
-                        f"{self.parent_log_path}/keyframes/keyframe-{kf_idx}/pointcloud_world",
+                        f"{cam_log_path}/pointcloud",
                         rr.Points3D(
                             positions=filtered_positions,
                             colors=filtered_colors,
