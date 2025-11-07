@@ -57,7 +57,11 @@ class RerunLogger:
         # Z-axis in camera frame is depth (forward direction)
         # This prevents long streaks extending far behind the camera
         self.min_depth = 0.1  # Minimum depth in meters (avoid points too close/behind camera)
-        self.max_depth = 5.0  # Maximum depth in meters (constrain to robot's perimeter)
+        self.max_depth = 3.0  # Maximum depth in meters (tighter constraint for cleaner reconstruction)
+
+        # Localization filtering: Only show pointclouds for well-localized keyframes
+        # Keyframes with N_updates >= min_updates have been refined by tracking/optimization
+        self.min_updates_for_display = 1  # Require at least 1 update (involved in tracking)
 
     def _filter_ceiling_local(self, positions, colors, mat4x4):
         """
@@ -221,6 +225,9 @@ class RerunLogger:
             is_new_keyframe = kf_idx not in self.keyframe_logged_list
             is_dirty_keyframe = kf_idx in dirty_set
 
+            # Check if keyframe is well-localized (has been updated by tracking/optimization)
+            is_localized = keyframe.N_updates >= self.min_updates_for_display
+
             # Log static content for new keyframes OR re-log pointcloud for dirty keyframes
             if is_new_keyframe or (is_dirty_keyframe and self.log_pointclouds):
                 # Get image (needed for colors)
@@ -236,8 +243,9 @@ class RerunLogger:
                         rr.Image(image=kf_img, color_model=rr.ColorModel.RGB).compress(),
                     )
 
-                # Log/re-log pointcloud for new OR dirty keyframes (if --full-slam enabled)
-                if self.log_pointclouds:
+                # Log/re-log pointcloud ONLY for well-localized keyframes (if --full-slam enabled)
+                # This prevents showing uncertain/unoptimized pointclouds that cause slipping
+                if self.log_pointclouds and is_localized:
                     # Create a mask based on the confidence values
                     conf_mask = keyframe.C.cpu().numpy() > self.conf_thresh
                     conf_mask = conf_mask.squeeze()
@@ -290,6 +298,14 @@ class RerunLogger:
                     )
 
                     self.keyframe_logged_list.append(kf_idx)
+
+            # Hide pointcloud for unlocalized keyframes (clear by logging empty pointcloud)
+            elif self.log_pointclouds and not is_localized and kf_idx in self.keyframe_logged_list:
+                # Keyframe exists but is not yet well-localized - hide its pointcloud
+                rr.log(
+                    f"{cam_log_path}/pointcloud",
+                    rr.Points3D(positions=[], colors=[]),
+                )
 
             # ALWAYS update Transform3D with latest optimized pose (even for existing keyframes)
             # This is critical: when backend optimizes poses, we need to update the transform
