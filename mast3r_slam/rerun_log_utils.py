@@ -223,24 +223,27 @@ class RerunLogger:
             cam_log_path = self.parent_log_path / "keyframes" / f"keyframe-{kf_idx}"
 
             is_new_keyframe = kf_idx not in self.keyframe_logged_list
+            is_dirty_keyframe = kf_idx in dirty_set
 
-            # Log static content (image, pointcloud, pinhole) ONCE for new keyframes
-            # NEVER re-log for dirty keyframes - this matches original rerun-io implementation
-            if is_new_keyframe:
+            # Log static content for new keyframes OR re-log pointcloud for dirty keyframes
+            # Dirty keyframes have refined poses, so pointcloud needs to be re-logged
+            # to appear at correct world position (prevents slipping)
+            if is_new_keyframe or (is_dirty_keyframe and self.log_pointclouds):
                 # Get image (needed for colors)
                 kf_img: Float32[torch.Tensor, "H W 3"] = keyframe.uimg
                 kf_img: UInt8[np.ndarray, "H W 3"] = (
                     (kf_img * 255).numpy().astype(np.uint8)
                 )
 
-                # Log image
-                rr.log(
-                    f"{cam_log_path}/pinhole/image",
-                    rr.Image(image=kf_img, color_model=rr.ColorModel.RGB).compress(),
-                )
+                # Log image only for new keyframes (not dirty)
+                if is_new_keyframe:
+                    rr.log(
+                        f"{cam_log_path}/pinhole/image",
+                        rr.Image(image=kf_img, color_model=rr.ColorModel.RGB).compress(),
+                    )
 
-                # Log pointcloud ONCE (if --full-slam enabled)
-                # Use filtering_mode='first' to lock depth on first observation (prevents averaging slip)
+                # Log/re-log pointcloud for new OR dirty keyframes (if --full-slam enabled)
+                # Re-logging replaces old pointcloud, moving it to refined pose position
                 if self.log_pointclouds:
                     # Create a mask based on the confidence values
                     conf_mask = keyframe.C.cpu().numpy() > self.conf_thresh
