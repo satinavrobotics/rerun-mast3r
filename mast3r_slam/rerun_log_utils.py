@@ -240,13 +240,13 @@ class RerunLogger:
                 )
 
                 # Log pointcloud ONCE (if --full-slam enabled)
-                # Use high conf_thresh (7.0) and depth filtering to get only high-quality points
+                # Use filtering_mode='first' to lock depth on first observation (prevents averaging slip)
                 if self.log_pointclouds:
                     # Create a mask based on the confidence values
                     conf_mask = keyframe.C.cpu().numpy() > self.conf_thresh
                     conf_mask = conf_mask.squeeze()
 
-                    # Get positions in camera frame (may have been updated by weighted_pointmap)
+                    # Get positions in camera frame (locked on first observation with filtering_mode='first')
                     positions: Float32[np.ndarray, "num_points 3"] = keyframe.X_canon.cpu().numpy()
                     colors: UInt8[np.ndarray, "num_points 3"] = kf_img.reshape(-1, 3)
 
@@ -269,7 +269,6 @@ class RerunLogger:
                     )
 
                     # Log pointcloud in camera frame (Transform3D will handle world transform)
-                    # Re-logging to same path replaces old pointcloud, removing "ghost" at old position
                     if len(filtered_positions) > 0:
                         rr.log(
                             f"{cam_log_path}/pointcloud",
