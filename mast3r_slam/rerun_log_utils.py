@@ -50,8 +50,18 @@ class RerunLogger:
         self.keyframe_logged_list = []
         self.global_map_logged_list = []  # Track which keyframes have been logged as meshes (custom shaders mode)
         self.num_keyframes_logged = 0
-        self.conf_thresh = 1.5  # Lowered from 7 to 1.5 for denser pointclouds
+        self.conf_thresh = 1.5 # Confidence threshold for point filtering
         self.image_plane_distance = 0.2
+
+        # Depth filtering: Only log points within this depth range (in camera frame)
+        # Z-axis in camera frame is depth (forward direction)
+        # This prevents long streaks extending far behind the camera
+        self.min_depth = 0.1  # Minimum depth in meters (avoid points too close/behind camera)
+        self.max_depth = 5.0  # Maximum depth in meters (tighter constraint for cleaner reconstruction)
+
+        # Localization filtering: Only show pointclouds for well-localized keyframes
+        # Keyframes with N_updates >= min_updates have been refined by tracking/optimization
+        self.min_updates_for_display = 1  # Require at least 1 update (involved in tracking)
 
     def _filter_ceiling_local(self, positions, colors, mat4x4):
         """
@@ -185,15 +195,12 @@ class RerunLogger:
             N_keyframes = len(keyframes)
             dirty_idx = keyframes.get_dirty_idx()
 
-        # Only process new keyframes or dirty (updated) keyframes to avoid O(N²) complexity
-        # New keyframes: not yet logged (not in self.keyframe_logged_list)
-        # Dirty keyframes: poses updated by backend optimization (in dirty_idx)
-        keyframes_to_process = []
-        for kf_idx in range(N_keyframes):
-            if kf_idx not in self.keyframe_logged_list or kf_idx in dirty_idx:
-                keyframes_to_process.append(kf_idx)
+        # Convert dirty_idx to a set for faster lookup
+        dirty_set = set(dirty_idx.cpu().numpy().tolist()) if len(dirty_idx) > 0 else set()
 
-        for kf_idx in keyframes_to_process:
+        # Process ALL keyframes to update Transform3D with latest optimized poses
+        # Re-log pointcloud for dirty keyframes to remove "ghost" clouds at old positions
+        for kf_idx in range(N_keyframes):
             keyframe: Frame = keyframes[kf_idx]
             se3_pose: lietorch.SE3 = as_SE3(keyframe.T_WC.cpu())
             matb4x4: Float32[np.ndarray, "1 4 4"] = (
@@ -215,30 +222,34 @@ class RerunLogger:
             ]  # Right column, first 3 elements
             cam_log_path = self.parent_log_path / "keyframes" / f"keyframe-{kf_idx}"
 
-            # IMPORTANT: Log the transform FIRST, before logging any child entities (image, pointcloud)
-            # This ensures that when the pointcloud is logged, it's already under the correct transform
-            rr.log(
-                f"{cam_log_path}",
-                rr.Transform3D(translation=translation_vector, mat3x3=rotation_matrix),
-            )
+            is_new_keyframe = kf_idx not in self.keyframe_logged_list
+            is_dirty_keyframe = kf_idx in dirty_set
 
-            if kf_idx not in self.keyframe_logged_list:
+            # Log static content for new keyframes OR re-log pointcloud for dirty keyframes
+            # Dirty keyframes have refined poses, so pointcloud needs to be re-logged
+            # to appear at correct world position (prevents slipping)
+            if is_new_keyframe or (is_dirty_keyframe and self.log_pointclouds):
+                # Get image (needed for colors)
                 kf_img: Float32[torch.Tensor, "H W 3"] = keyframe.uimg
                 kf_img: UInt8[np.ndarray, "H W 3"] = (
                     (kf_img * 255).numpy().astype(np.uint8)
                 )
-                rr.log(
-                    f"{cam_log_path}/pinhole/image",
-                    rr.Image(image=kf_img, color_model=rr.ColorModel.RGB).compress(),
-                )
 
-                # Log per-keyframe pointcloud only if --full-slam is enabled
+                # Log image only for new keyframes (not dirty)
+                if is_new_keyframe:
+                    rr.log(
+                        f"{cam_log_path}/pinhole/image",
+                        rr.Image(image=kf_img, color_model=rr.ColorModel.RGB).compress(),
+                    )
+
+                # Log/re-log pointcloud for new OR dirty keyframes (if --full-slam enabled)
+                # Re-logging replaces old pointcloud, moving it to refined pose position
                 if self.log_pointclouds:
                     # Create a mask based on the confidence values
                     conf_mask = keyframe.C.cpu().numpy() > self.conf_thresh
                     conf_mask = conf_mask.squeeze()
 
-                    # Get positions and colors
+                    # Get positions in camera frame (locked on first observation with filtering_mode='first')
                     positions: Float32[np.ndarray, "num_points 3"] = keyframe.X_canon.cpu().numpy()
                     colors: UInt8[np.ndarray, "num_points 3"] = kf_img.reshape(-1, 3)
 
@@ -246,12 +257,21 @@ class RerunLogger:
                     masked_positions = positions[conf_mask]
                     masked_colors = colors[conf_mask]
 
-                    # Filter ceiling based on local Z-range of this pointcloud
+                    # CRITICAL: Filter by depth (Z-axis in camera frame)
+                    # Only keep points within robot's perimeter (e.g., 0.1m to 5m)
+                    # This prevents long streaks extending far from camera
+                    depth_values = masked_positions[:, 2]  # Z-coordinate is depth
+                    depth_mask = (depth_values >= self.min_depth) & (depth_values <= self.max_depth)
+
+                    depth_filtered_positions = masked_positions[depth_mask]
+                    depth_filtered_colors = masked_colors[depth_mask]
+
+                    # Filter ceiling based on local Y-range of this pointcloud (in camera frame)
                     filtered_positions, filtered_colors = self._filter_ceiling_local(
-                        masked_positions, masked_colors, mat4x4
+                        depth_filtered_positions, depth_filtered_colors, mat4x4
                     )
 
-                    # Log the filtered pointcloud immediately
+                    # Log pointcloud in camera frame (Transform3D will handle world transform)
                     if len(filtered_positions) > 0:
                         rr.log(
                             f"{cam_log_path}/pointcloud",
@@ -260,17 +280,29 @@ class RerunLogger:
                                 colors=filtered_colors,
                             ),
                         )
-                self.keyframe_logged_list.append(kf_idx)
+
+                # Log pinhole camera parameters only for new keyframes
+                if is_new_keyframe:
+                    rr.log(
+                        f"{cam_log_path}/pinhole",
+                        rr.Pinhole(
+                            focal_length=focal,
+                            principal_point=pp.numpy(),
+                            height=H,
+                            width=W,
+                            camera_xyz=rr.ViewCoordinates.RDF,  # OpenCV convention (matches world coordinate system)
+                            image_plane_distance=self.image_plane_distance,
+                        ),
+                    )
+
+                    self.keyframe_logged_list.append(kf_idx)
+
+            # ALWAYS update Transform3D with latest optimized pose (even for existing keyframes)
+            # This is critical: when backend optimizes poses, we need to update the transform
+            # so the pointcloud (which stays in camera frame) gets positioned correctly
             rr.log(
-                f"{cam_log_path}/pinhole",
-                rr.Pinhole(
-                    focal_length=focal,
-                    principal_point=pp.numpy(),
-                    height=H,
-                    width=W,
-                    camera_xyz=rr.ViewCoordinates.RDF,  # OpenCV convention (matches world coordinate system)
-                    image_plane_distance=self.image_plane_distance,
-                ),
+                f"{cam_log_path}",
+                rr.Transform3D(translation=translation_vector, mat3x3=rotation_matrix),
             )
 
         # log the last keyframe image
@@ -566,11 +598,11 @@ class RerunLogger:
 
                 # Depth discontinuity filtering: reject quads with large depth jumps
                 # Compute depths (Z-coordinate in camera frame)
-                depths = np.array([
-                    np.linalg.norm(p_tl),
-                    np.linalg.norm(p_tr),
-                    np.linalg.norm(p_bl),
-                    np.linalg.norm(p_br)
+                depths = np.array([                  
+                    p_tl[2],  # Z-coordinate = depth along camera axis
+                    p_tr[2],
+                    p_bl[2],
+                    p_br[2]
                 ])
 
                 # Check relative depth variation: (max - min) / mean
