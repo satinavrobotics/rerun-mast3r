@@ -40,12 +40,36 @@ os.environ.setdefault("RERUN_SPAWN", "false")
 
 def main():
     # Import here to avoid import errors when loading as FastAPI app
-    from mast3r_slam.api.inference import InferenceConfig, mast3r_slam_inference
+    from mast3r_slam.api.inference import InferenceConfig, mast3r_slam_inference, cleanup_slam_processes
+    import torch
+    import gc
 
     cfg = tyro.cli(InferenceConfig)
 
-    # Run SLAM inference
-    keyframes = mast3r_slam_inference(cfg)
+    keyframes = None
+    try:
+        # Run SLAM inference
+        keyframes = mast3r_slam_inference(cfg)
+    except KeyboardInterrupt:
+        print("\n[Ctrl+C] Interrupted by user, cleaning up...")
+        # Cleanup stray processes and GPU memory
+        cleanup_slam_processes(cfg.save_as)
+
+        # Force GPU cleanup
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            for _ in range(3):
+                gc.collect()
+            torch.cuda.empty_cache()
+            print("[Ctrl+C] ✓ GPU memory cleaned")
+
+        print("[Ctrl+C] ✓ Cleanup complete, exiting...")
+        sys.exit(0)
+    except Exception as e:
+        print(f"\n[Error] SLAM inference failed: {e}")
+        cleanup_slam_processes(cfg.save_as)
+        raise
 
     # Full SLAM: Build and export global fused pointcloud
     if cfg.full_slam and keyframes is not None:

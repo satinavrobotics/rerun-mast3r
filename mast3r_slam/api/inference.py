@@ -33,12 +33,52 @@ from mast3r_slam.nerfstudio_utils import save_kf_to_nerfstudio
 # session_id -> {'backend': Process, 'frontend': Process}
 _active_processes = {}
 
+# Track active models for cleanup
+_active_models = {}
+
 
 def format_time(seconds):
     """Format time in minutes:seconds format (mm:ss)."""
     minutes = int(seconds // 60)
     seconds = int(seconds % 60)
     return f"{minutes:02d}:{seconds:02d}"
+
+
+def cleanup_slam_processes(session_id: str):
+    """Cleanup stray SLAM processes and GPU memory for a session.
+
+    Called when Ctrl+C is pressed or on error to ensure no processes are left running.
+    """
+    import gc
+
+    print(f"[Cleanup] Cleaning up SLAM session: {session_id}")
+
+    # Terminate backend process
+    if session_id in _active_processes:
+        processes = _active_processes[session_id]
+        for name, proc in processes.items():
+            if proc and proc.is_alive():
+                print(f"[Cleanup] Terminating {name} process (PID: {proc.pid})...")
+                proc.terminate()
+                proc.join(timeout=3.0)
+                if proc.is_alive():
+                    print(f"[Cleanup] WARNING: {name} still alive, killing...")
+                    proc.kill()
+                    proc.join(timeout=1.0)
+                print(f"[Cleanup] ✓ {name} process terminated")
+        del _active_processes[session_id]
+
+    # Delete model from GPU
+    if session_id in _active_models:
+        print(f"[Cleanup] Deleting model from GPU...")
+        del _active_models[session_id]
+        for _ in range(3):
+            gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        print(f"[Cleanup] ✓ Model deleted")
+
+    print(f"[Cleanup] ✓ Session {session_id} cleaned up")
 
 
 @dataclass
@@ -106,6 +146,10 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
     model = load_mast3r(device=device)
     model.share_memory()
 
+    # Store model for cleanup
+    session_id = inf_config.save_as
+    _active_models[session_id] = model
+
     has_calib: bool = dataset.has_calib()
     use_calib: bool = config["use_calib"]
     if use_calib and not has_calib:
@@ -137,7 +181,6 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
     backend.start()
 
     # Store backend process for cleanup
-    session_id = inf_config.save_as
     _active_processes[session_id] = {'backend': backend}
 
     # Collect all frames if --all-frames flag is set
@@ -147,107 +190,124 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
     fps_timer: float = time.time()
     start_time = timer()
 
-    while True:
-        rr.set_time_sequence(timeline="frame", sequence=i)
-        mode: Mode = states.get_mode()
+    try:
+        while True:
+            rr.set_time_sequence(timeline="frame", sequence=i)
+            mode: Mode = states.get_mode()
 
-        if i == len(dataset):
-            states.set_mode(Mode.TERMINATED)
-            break
+            if i == len(dataset):
+                states.set_mode(Mode.TERMINATED)
+                break
 
-        timestamp, img = dataset[i]
+            timestamp, img = dataset[i]
 
-        # Check for graceful shutdown (dataset terminated while waiting)
-        if timestamp is None or img is None:
-            print(f"[SLAM Inference] Dataset terminated, stopping gracefully...")
-            states.set_mode(Mode.TERMINATED)
-            break
+            # Check for graceful shutdown (dataset terminated while waiting)
+            if timestamp is None or img is None:
+                print(f"[SLAM Inference] Dataset terminated, stopping gracefully...")
+                states.set_mode(Mode.TERMINATED)
+                break
 
-        # get frames last camera pose
-        T_WC: lietorch.Sim3 = (
-            lietorch.Sim3.Identity(1, device=device)
-            if i == 0
-            else states.get_frame().T_WC
-        )
-        frame: Frame = create_frame(
-            i, img, T_WC, img_size=dataset.img_size, device=device
-        )
+            # get frames last camera pose
+            T_WC: lietorch.Sim3 = (
+                lietorch.Sim3.Identity(1, device=device)
+                if i == 0
+                else states.get_frame().T_WC
+            )
+            frame: Frame = create_frame(
+                i, img, T_WC, img_size=dataset.img_size, device=device
+            )
 
-        # Set intrinsics K on the frame if using calibrated mode
-        if config["use_calib"] and K is not None:
-            frame.K = K
-            print(f"[Inference] Frame {i}: Set K matrix on frame (use_calib=True)")
+            # Set intrinsics K on the frame if using calibrated mode
+            if config["use_calib"] and K is not None:
+                frame.K = K
+                print(f"[Inference] Frame {i}: Set K matrix on frame (use_calib=True)")
 
-        if mode == Mode.INIT:
-            # Initialize via mono inference, and encoded features needed for database
-            X_init, C_init = mast3r_inference_mono(model, frame)
-            frame.update_pointmap(X_init, C_init)
-            keyframes.append(frame)
-            states.queue_global_optimization(len(keyframes) - 1)
-            states.set_mode(Mode.TRACKING)
-            states.set_frame(frame)
+            if mode == Mode.INIT:
+                # Initialize via mono inference, and encoded features needed for database
+                X_init, C_init = mast3r_inference_mono(model, frame)
+                frame.update_pointmap(X_init, C_init)
+                keyframes.append(frame)
+                states.queue_global_optimization(len(keyframes) - 1)
+                states.set_mode(Mode.TRACKING)
+                states.set_frame(frame)
+                rr_logger.log_frame(frame, keyframes, states)
+
+                # Custom Shaders Mode: Log global mesh map after initial keyframe (experimental)
+                # This replicates OpenGL shader behavior but is slower and experimental
+                if inf_config.custom_shaders and not inf_config.no_viz:
+                    rr_logger.log_global_map(keyframes, conf_thresh=inf_config.conf_thresh)
+
+                # Collect all frames if --all-frames flag is set
+                if inf_config.all_frames:
+                    all_frames.append(frame)
+
+                i += 1
+                continue
+
+            if mode == Mode.TRACKING:
+                add_new_kf, match_info, try_reloc = tracker.track(frame)
+                if try_reloc:
+                    states.set_mode(Mode.RELOC)
+                states.set_frame(frame)
+
+            elif mode == Mode.RELOC:
+                X, C = mast3r_inference_mono(model, frame)
+                frame.update_pointmap(X, C)
+                states.set_frame(frame)
+                states.queue_reloc()
+                # In single threaded mode, make sure relocalization happen for every frame
+                while config["single_thread"]:
+                    with states.lock:
+                        if states.reloc_sem.value == 0:
+                            break
+                    time.sleep(0.01)
+
+            else:
+                raise Exception("Invalid mode")
+
+            if add_new_kf:
+                keyframes.append(frame)
+                states.queue_global_optimization(len(keyframes) - 1)
+                # In single threaded mode, wait for the backend to finish
+                while config["single_thread"]:
+                    with states.lock:
+                        if len(states.global_optimizer_tasks) == 0:
+                            break
+                    time.sleep(0.01)
+
+            ## rerun log stuff
             rr_logger.log_frame(frame, keyframes, states)
 
-            # Custom Shaders Mode: Log global mesh map after initial keyframe (experimental)
+            # Custom Shaders Mode: Log global mesh map after each new keyframe (experimental)
             # This replicates OpenGL shader behavior but is slower and experimental
-            if inf_config.custom_shaders and not inf_config.no_viz:
+            if add_new_kf and inf_config.custom_shaders and not inf_config.no_viz:
                 rr_logger.log_global_map(keyframes, conf_thresh=inf_config.conf_thresh)
 
             # Collect all frames if --all-frames flag is set
             if inf_config.all_frames:
                 all_frames.append(frame)
 
+            # log time
+            if i % 30 == 0:
+                FPS = i / (time.time() - fps_timer)
+                print(f"FPS: {FPS}")
             i += 1
-            continue
 
-        if mode == Mode.TRACKING:
-            add_new_kf, match_info, try_reloc = tracker.track(frame)
-            if try_reloc:
-                states.set_mode(Mode.RELOC)
-            states.set_frame(frame)
-
-        elif mode == Mode.RELOC:
-            X, C = mast3r_inference_mono(model, frame)
-            frame.update_pointmap(X, C)
-            states.set_frame(frame)
-            states.queue_reloc()
-            # In single threaded mode, make sure relocalization happen for every frame
-            while config["single_thread"]:
-                with states.lock:
-                    if states.reloc_sem.value == 0:
-                        break
-                time.sleep(0.01)
-
-        else:
-            raise Exception("Invalid mode")
-
-        if add_new_kf:
-            keyframes.append(frame)
-            states.queue_global_optimization(len(keyframes) - 1)
-            # In single threaded mode, wait for the backend to finish
-            while config["single_thread"]:
-                with states.lock:
-                    if len(states.global_optimizer_tasks) == 0:
-                        break
-                time.sleep(0.01)
-
-        ## rerun log stuff
-        rr_logger.log_frame(frame, keyframes, states)
-
-        # Custom Shaders Mode: Log global mesh map after each new keyframe (experimental)
-        # This replicates OpenGL shader behavior but is slower and experimental
-        if add_new_kf and inf_config.custom_shaders and not inf_config.no_viz:
-            rr_logger.log_global_map(keyframes, conf_thresh=inf_config.conf_thresh)
-
-        # Collect all frames if --all-frames flag is set
-        if inf_config.all_frames:
-            all_frames.append(frame)
-
-        # log time
-        if i % 30 == 0:
-            FPS = i / (time.time() - fps_timer)
-            print(f"FPS: {FPS}")
-        i += 1
+    except KeyboardInterrupt:
+        print("\n[Ctrl+C] SLAM interrupted by user")
+        states.set_mode(Mode.TERMINATED)
+        # Cleanup will happen in finally block
+    finally:
+        # Always cleanup backend process
+        print("[Cleanup] Terminating backend process...")
+        if backend.is_alive():
+            backend.terminate()
+            backend.join(timeout=3.0)
+            if backend.is_alive():
+                print("[Cleanup] WARNING: Backend still alive, killing...")
+                backend.kill()
+                backend.join(timeout=1.0)
+        print("[Cleanup] ✓ Backend terminated")
 
     if dataset.save_results:
         save_dir, seq_name = eval.prepare_savedir(inf_config, dataset)
@@ -285,7 +345,7 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
         print(f"Processed {len(all_frames)} frames (all frames mode)")
     else:
         print(f"Processed {len(keyframes)} keyframes")
-    backend.join()
+    # Backend already joined in finally block
     if not inf_config.no_viz:
         print("All visualization processes terminated")
 
