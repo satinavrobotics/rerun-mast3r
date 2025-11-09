@@ -296,18 +296,20 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
     except KeyboardInterrupt:
         print("\n[Ctrl+C] SLAM interrupted by user")
         states.set_mode(Mode.TERMINATED)
-        # Cleanup will happen in finally block
-    finally:
-        # Always cleanup backend process
-        print("[Cleanup] Terminating backend process...")
+
+        # Force terminate backend on Ctrl+C
+        print("[Ctrl+C] Terminating backend process...")
         if backend.is_alive():
             backend.terminate()
             backend.join(timeout=3.0)
             if backend.is_alive():
-                print("[Cleanup] WARNING: Backend still alive, killing...")
+                print("[Ctrl+C] WARNING: Backend still alive, killing...")
                 backend.kill()
                 backend.join(timeout=1.0)
-        print("[Cleanup] ✓ Backend terminated")
+        print("[Ctrl+C] ✓ Backend terminated")
+
+        # Re-raise to exit
+        raise
 
     if dataset.save_results:
         save_dir, seq_name = eval.prepare_savedir(inf_config, dataset)
@@ -345,7 +347,25 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
         print(f"Processed {len(all_frames)} frames (all frames mode)")
     else:
         print(f"Processed {len(keyframes)} keyframes")
-    # Backend already joined in finally block
+
+    # Wait for backend to finish normally (not terminated by Ctrl+C)
+    print("[Cleanup] Waiting for backend to finish...")
+    backend.join()
+    print("[Cleanup] ✓ Backend finished")
+
+    # Clean up model and GPU memory
+    if session_id in _active_models:
+        del _active_models[session_id]
+    if session_id in _active_processes:
+        del _active_processes[session_id]
+
+    import gc
+    for _ in range(3):
+        gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    print("[Cleanup] ✓ GPU memory cleaned")
+
     if not inf_config.no_viz:
         print("All visualization processes terminated")
 
