@@ -44,12 +44,15 @@ def save_kf_to_nerfstudio(
     ns_save_path: Path,
     keyframes: SharedKeyframes,
     confidence_thresh: float = 1.0,
+    min_updates: int = 1,
 ):
     """
     Save keyframes to NerfStudio format
     :param ns_save_path: Path to save the NerfStudio data
     :param keyframes: SharedKeyframes object
     :param confidence_thresh: Confidence threshold to apply to the keyframes (float, typically 0.1-5.0)
+    :param min_updates: Minimum number of pose updates required to include keyframe (default: 1)
+                        Filters out keyframes that were never optimized by the backend
 
     :return: Open3D point cloud object
     """
@@ -63,8 +66,16 @@ def save_kf_to_nerfstudio(
     ns_frames_list = []
     pcd_positions = []
     pcd_colors = []
+    skipped_count = 0
     for i in tqdm.tqdm(range(len(keyframes)), desc="Processing keyframes"):
         keyframe = keyframes[i]
+
+        # Skip keyframes that haven't been optimized by the backend
+        # N_updates tracks how many times the keyframe's pose has been refined
+        # Keyframes with N_updates < min_updates have unoptimized poses and should be excluded
+        if keyframe.N_updates < min_updates:
+            skipped_count += 1
+            continue
         rgb_img: Float32[torch.Tensor, "H W 3"] = keyframe.uimg
         rgb_img: UInt8[np.ndarray, "H W 3"] = (rgb_img * 255).numpy().astype(np.uint8)
         bgr_img: UInt8[np.ndarray, "H W 3"] = cv2.cvtColor(rgb_img, cv2.COLOR_RGB2BGR)
@@ -138,6 +149,12 @@ def save_kf_to_nerfstudio(
                 colmap_im_id=i,
             )
         )
+
+    # Print filtering statistics
+    total_keyframes = len(keyframes)
+    included_keyframes = total_keyframes - skipped_count
+    print(f"[NerfStudio Export] Included {included_keyframes}/{total_keyframes} keyframes "
+          f"(skipped {skipped_count} with N_updates < {min_updates})")
 
     # stack all the point clouds
     pcd_positions: Float32[np.ndarray, "num_points 3"] = np.vstack(pcd_positions)

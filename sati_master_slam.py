@@ -101,10 +101,12 @@ def main():
             from mast3r_slam.nerfstudio_utils import save_kf_to_nerfstudio
 
             # Generate final fused pointcloud (same as nerfstudio export)
+            # Only include keyframes with N_updates >= 1 (optimized by backend)
             pcd = save_kf_to_nerfstudio(
                 ns_save_path=save_dir / "nerfstudio-output",
                 keyframes=keyframes,
                 confidence_thresh=cfg.conf_thresh,  # Use same threshold as PLY export
+                min_updates=1,  # Only include keyframes optimized by backend
             )
 
             # Log final pointcloud to Rerun
