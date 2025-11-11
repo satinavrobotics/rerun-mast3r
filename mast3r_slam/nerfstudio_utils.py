@@ -43,13 +43,13 @@ class NerfstudioData:
 def save_kf_to_nerfstudio(
     ns_save_path: Path,
     keyframes: SharedKeyframes,
-    confidence_thresh: int = 100,
+    confidence_thresh: float = 1.0,
 ):
     """
     Save keyframes to NerfStudio format
     :param ns_save_path: Path to save the NerfStudio data
     :param keyframes: SharedKeyframes object
-    :param confidence_thresh: Confidence threshold to apply to the keyframes
+    :param confidence_thresh: Confidence threshold to apply to the keyframes (float, typically 0.1-5.0)
 
     :return: Open3D point cloud object
     """
