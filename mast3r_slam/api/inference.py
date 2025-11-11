@@ -143,6 +143,17 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
     print(inf_config.dataset)
     print(config)
 
+    # Reset CUDA context at the start to prevent "operation not supported" errors
+    # This cleans up any corrupted IPC handles from previous runs
+    if torch.cuda.is_available():
+        try:
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+            print("[Init] ✓ CUDA context reset")
+        except Exception as e:
+            print(f"[Init] WARNING: CUDA reset failed (this is OK on first run): {e}")
+
     manager: SyncManager = mp.Manager()
 
     dataset = load_dataset(inf_config.dataset, img_size=inf_config.img_size)
