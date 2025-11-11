@@ -55,14 +55,18 @@ def main():
         # Cleanup stray processes and GPU memory
         cleanup_slam_processes(cfg.save_as)
 
-        # Force GPU cleanup
+        # Force GPU cleanup with CUDA IPC cleanup
         if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.synchronize()
-            for _ in range(3):
-                gc.collect()
-            torch.cuda.empty_cache()
-            print("[Ctrl+C] ✓ GPU memory cleaned")
+            try:
+                torch.cuda.synchronize()
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()  # Clean up IPC handles
+                for _ in range(3):
+                    gc.collect()
+                torch.cuda.empty_cache()
+                print("[Ctrl+C] ✓ GPU memory and CUDA context cleaned")
+            except Exception as e:
+                print(f"[Ctrl+C] WARNING: CUDA cleanup failed: {e}")
 
         print("[Ctrl+C] ✓ Cleanup complete, exiting...")
         sys.exit(0)

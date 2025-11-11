@@ -74,9 +74,18 @@ def cleanup_slam_processes(session_id: str):
         del _active_models[session_id]
         for _ in range(3):
             gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
         print(f"[Cleanup] ✓ Model deleted")
+
+    # Clean up CUDA context to prevent "operation not supported" errors on next run
+    if torch.cuda.is_available():
+        print(f"[Cleanup] Cleaning up CUDA context...")
+        try:
+            torch.cuda.synchronize()  # Wait for all CUDA operations to complete
+            torch.cuda.empty_cache()  # Clear CUDA memory cache
+            torch.cuda.ipc_collect()  # Clean up IPC (inter-process communication) handles
+            print(f"[Cleanup] ✓ CUDA context cleaned")
+        except Exception as e:
+            print(f"[Cleanup] WARNING: CUDA cleanup failed: {e}")
 
     print(f"[Cleanup] ✓ Session {session_id} cleaned up")
 
@@ -308,6 +317,17 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
                 backend.join(timeout=1.0)
         print("[Ctrl+C] ✓ Backend terminated")
 
+        # Clean up CUDA context
+        if torch.cuda.is_available():
+            print("[Ctrl+C] Cleaning up CUDA context...")
+            try:
+                torch.cuda.synchronize()
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
+                print("[Ctrl+C] ✓ CUDA context cleaned")
+            except Exception as e:
+                print(f"[Ctrl+C] WARNING: CUDA cleanup failed: {e}")
+
         # Re-raise to exit
         raise
 
@@ -362,9 +382,16 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
     import gc
     for _ in range(3):
         gc.collect()
+
+    # Clean up CUDA context
     if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-    print("[Cleanup] ✓ GPU memory cleaned")
+        try:
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()  # Clean up IPC handles to prevent "operation not supported" errors
+            print("[Cleanup] ✓ GPU memory and CUDA context cleaned")
+        except Exception as e:
+            print(f"[Cleanup] WARNING: CUDA cleanup failed: {e}")
 
     if not inf_config.no_viz:
         print("All visualization processes terminated")
