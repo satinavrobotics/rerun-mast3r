@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 def load_mast3r(path=None, device="cuda"):
     weights_path = (
-        "checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth"
+        "workspace/rerun_mast3r/checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth"
         if path is None
         else path
     )

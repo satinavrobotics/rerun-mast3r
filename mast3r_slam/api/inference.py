@@ -163,7 +163,9 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
     keyframes = SharedKeyframes(manager, h, w)
     states = SharedStates(manager, h, w)
 
-    model = load_mast3r(device=device)
+    # Load model using weights path from config
+    weights_path = config["model"]["weights_path"]
+    model = load_mast3r(path=weights_path, device=device)
     model.share_memory()
 
     # Store model for cleanup
