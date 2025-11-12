@@ -15,4 +15,6 @@ python /workspace/rerun_mast3r/sati_master_slam.py \
   --rerun-server-addr master_slam_cli:9878 \
   --full-slam \
   --conf-thresh 0.3
+
+  
   

@@ -66,7 +66,7 @@ def load_mast3r(path=None, device="cuda"):
 
 def load_retriever(mast3r_model, retriever_path=None, device="cuda"):
     retriever_path = (
-        "checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_trainingfree.pth"
+        "/workspace/rerun_mast3r/checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_trainingfree.pth"
         if retriever_path is None
         else retriever_path
     )
