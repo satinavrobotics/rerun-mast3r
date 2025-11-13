@@ -425,8 +425,9 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
         except KeyboardInterrupt:
             print("\nShutting down rerun server...")
 
-    # Return keyframes for full SLAM processing
-    return keyframes
+    # Return keyframes and rr_logger for full SLAM processing
+    # rr_logger contains the list of keyframes that were actually logged during runtime
+    return keyframes, rr_logger
 
 
 def relocalization(frame, keyframes, factor_graph, retrieval_database):

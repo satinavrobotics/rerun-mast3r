@@ -234,12 +234,6 @@ class RerunLogger:
                 N_updates = 0
             is_optimized = N_updates >= self.min_updates_for_display
 
-            # Debug: Print N_updates for each keyframe
-            if is_new_keyframe or is_dirty_keyframe:
-                status = "NEW" if is_new_keyframe else "DIRTY"
-                opt_status = "✓ OPTIMIZED" if is_optimized else "✗ UNOPTIMIZED"
-                print(f"[RerunLogger] KF-{kf_idx} [{status}] N_updates={N_updates} {opt_status} (min={self.min_updates_for_display})")
-
             # Log static content for new keyframes OR re-log pointcloud for dirty keyframes
             # Dirty keyframes have refined poses, so pointcloud needs to be re-logged
             # to appear at correct world position (prevents slipping)

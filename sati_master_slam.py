@@ -47,9 +47,10 @@ def main():
     cfg = tyro.cli(InferenceConfig)
 
     keyframes = None
+    rr_logger = None
     try:
         # Run SLAM inference
-        keyframes = mast3r_slam_inference(cfg)
+        keyframes, rr_logger = mast3r_slam_inference(cfg)
     except KeyboardInterrupt:
         print("\n[Ctrl+C] Interrupted by user, cleaning up...")
         # Cleanup stray processes and GPU memory
@@ -100,14 +101,17 @@ def main():
             import rerun as rr
             from mast3r_slam.nerfstudio_utils import save_kf_to_nerfstudio
 
-            # Generate final fused pointcloud (same as nerfstudio export)
-            # Only include keyframes with N_updates >= 2 (refined by backend)
-            # NOTE: N_updates=1 means initial observation, N_updates=2+ means refined by tracking/optimization
+            # Generate final fused pointcloud using ONLY keyframes that were logged during runtime
+            # This ensures the final mesh matches what was displayed during SLAM (no slips from unoptimized keyframes)
+            # Get list of keyframe indices that were actually logged (passed N_updates filter)
+            logged_keyframe_indices = rr_logger.keyframe_logged_list if rr_logger is not None else None
+
             pcd = save_kf_to_nerfstudio(
                 ns_save_path=save_dir / "nerfstudio-output",
                 keyframes=keyframes,
                 confidence_thresh=cfg.conf_thresh,  # Use same threshold as PLY export
                 min_updates=2,  # Only include keyframes refined by backend (not just initialized)
+                keyframe_indices=logged_keyframe_indices,  # Only use keyframes that were logged during runtime
             )
 
             # Log final pointcloud to Rerun

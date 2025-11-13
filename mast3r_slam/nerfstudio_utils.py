@@ -45,6 +45,7 @@ def save_kf_to_nerfstudio(
     keyframes: SharedKeyframes,
     confidence_thresh: float = 1.0,
     min_updates: int = 1,
+    keyframe_indices: list = None,
 ):
     """
     Save keyframes to NerfStudio format
@@ -53,6 +54,8 @@ def save_kf_to_nerfstudio(
     :param confidence_thresh: Confidence threshold to apply to the keyframes (float, typically 0.1-5.0)
     :param min_updates: Minimum number of pose updates required to include keyframe (default: 1)
                         Filters out keyframes that were never optimized by the backend
+    :param keyframe_indices: Optional list of keyframe indices to include (default: None = all keyframes)
+                             If provided, only these keyframes will be exported (useful for matching runtime visualization)
 
     :return: Open3D point cloud object
     """
@@ -67,7 +70,17 @@ def save_kf_to_nerfstudio(
     pcd_positions = []
     pcd_colors = []
     skipped_count = 0
-    for i in tqdm.tqdm(range(len(keyframes)), desc="Processing keyframes"):
+
+    # Determine which keyframes to process
+    if keyframe_indices is not None:
+        # Use only specified keyframe indices (e.g., those logged during runtime)
+        indices_to_process = keyframe_indices
+        print(f"[NerfStudio Export] Using {len(indices_to_process)} keyframes from logged list")
+    else:
+        # Use all keyframes
+        indices_to_process = range(len(keyframes))
+
+    for i in tqdm.tqdm(indices_to_process, desc="Processing keyframes"):
         keyframe = keyframes[i]
 
         # Skip keyframes that haven't been optimized by the backend
@@ -152,9 +165,15 @@ def save_kf_to_nerfstudio(
 
     # Print filtering statistics
     total_keyframes = len(keyframes)
-    included_keyframes = total_keyframes - skipped_count
-    print(f"[NerfStudio Export] Included {included_keyframes}/{total_keyframes} keyframes "
-          f"(skipped {skipped_count} with N_updates < {min_updates})")
+    total_processed = len(indices_to_process) if keyframe_indices is not None else total_keyframes
+    included_keyframes = total_processed - skipped_count
+
+    if keyframe_indices is not None:
+        print(f"[NerfStudio Export] Included {included_keyframes}/{total_processed} logged keyframes "
+              f"(skipped {skipped_count} with N_updates < {min_updates}, total keyframes: {total_keyframes})")
+    else:
+        print(f"[NerfStudio Export] Included {included_keyframes}/{total_keyframes} keyframes "
+              f"(skipped {skipped_count} with N_updates < {min_updates})")
 
     # stack all the point clouds
     pcd_positions: Float32[np.ndarray, "num_points 3"] = np.vstack(pcd_positions)
