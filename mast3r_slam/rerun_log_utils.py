@@ -225,10 +225,16 @@ class RerunLogger:
             is_new_keyframe = kf_idx not in self.keyframe_logged_list
             is_dirty_keyframe = kf_idx in dirty_set
 
+            # Check if keyframe has been optimized by backend (N_updates >= min_updates_for_display)
+            # This prevents logging unoptimized keyframes that may have incorrect poses (causing slips)
+            N_updates = keyframe.N_updates.item() if hasattr(keyframe, 'N_updates') else 0
+            is_optimized = N_updates >= self.min_updates_for_display
+
             # Log static content for new keyframes OR re-log pointcloud for dirty keyframes
             # Dirty keyframes have refined poses, so pointcloud needs to be re-logged
             # to appear at correct world position (prevents slipping)
-            if is_new_keyframe or (is_dirty_keyframe and self.log_pointclouds):
+            # CRITICAL: Only log pointclouds for optimized keyframes (N_updates >= min_updates_for_display)
+            if is_new_keyframe or (is_dirty_keyframe and self.log_pointclouds and is_optimized):
                 # Get image (needed for colors)
                 kf_img: Float32[torch.Tensor, "H W 3"] = keyframe.uimg
                 kf_img: UInt8[np.ndarray, "H W 3"] = (
@@ -244,7 +250,8 @@ class RerunLogger:
 
                 # Log/re-log pointcloud for new OR dirty keyframes (if --full-slam enabled)
                 # Re-logging replaces old pointcloud, moving it to refined pose position
-                if self.log_pointclouds:
+                # CRITICAL: Only log if keyframe has been optimized (prevents slips from unoptimized poses)
+                if self.log_pointclouds and is_optimized:
                     # Create a mask based on the confidence values
                     conf_mask = keyframe.C.cpu().numpy() > self.conf_thresh
                     conf_mask = conf_mask.squeeze()
@@ -376,6 +383,13 @@ class RerunLogger:
                 continue
 
             keyframe = keyframes[i]
+
+            # CRITICAL: Only log keyframes that have been optimized by backend (N_updates >= min_updates_for_display)
+            # This prevents logging unoptimized keyframes with incorrect poses (causing slips/misalignments)
+            N_updates = keyframe.N_updates.item() if hasattr(keyframe, 'N_updates') else 0
+            if N_updates < self.min_updates_for_display:
+                continue
+
             num_new_keyframes += 1
 
             # Get image dimensions
