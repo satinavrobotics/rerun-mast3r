@@ -61,7 +61,8 @@ class RerunLogger:
 
         # Localization filtering: Only show pointclouds for well-localized keyframes
         # Keyframes with N_updates >= min_updates have been refined by tracking/optimization
-        self.min_updates_for_display = 1  # Require at least 1 update (involved in tracking)
+        # NOTE: N_updates=1 means initial observation, N_updates=2+ means refined by backend
+        self.min_updates_for_display = 2  # Require at least 2 updates (refined by backend)
 
     def _filter_ceiling_local(self, positions, colors, mat4x4):
         """
@@ -232,6 +233,12 @@ class RerunLogger:
             else:
                 N_updates = 0
             is_optimized = N_updates >= self.min_updates_for_display
+
+            # Debug: Print N_updates for each keyframe
+            if is_new_keyframe or is_dirty_keyframe:
+                status = "NEW" if is_new_keyframe else "DIRTY"
+                opt_status = "✓ OPTIMIZED" if is_optimized else "✗ UNOPTIMIZED"
+                print(f"[RerunLogger] KF-{kf_idx} [{status}] N_updates={N_updates} {opt_status} (min={self.min_updates_for_display})")
 
             # Log static content for new keyframes OR re-log pointcloud for dirty keyframes
             # Dirty keyframes have refined poses, so pointcloud needs to be re-logged

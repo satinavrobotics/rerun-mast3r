@@ -101,12 +101,13 @@ def main():
             from mast3r_slam.nerfstudio_utils import save_kf_to_nerfstudio
 
             # Generate final fused pointcloud (same as nerfstudio export)
-            # Only include keyframes with N_updates >= 1 (optimized by backend)
+            # Only include keyframes with N_updates >= 2 (refined by backend)
+            # NOTE: N_updates=1 means initial observation, N_updates=2+ means refined by tracking/optimization
             pcd = save_kf_to_nerfstudio(
                 ns_save_path=save_dir / "nerfstudio-output",
                 keyframes=keyframes,
                 confidence_thresh=cfg.conf_thresh,  # Use same threshold as PLY export
-                min_updates=1,  # Only include keyframes optimized by backend
+                min_updates=2,  # Only include keyframes refined by backend (not just initialized)
             )
 
             # Log final pointcloud to Rerun
