@@ -46,7 +46,7 @@ def save_kf_to_nerfstudio(
     confidence_thresh: float = 1.0,
     min_updates: int = 1,
     keyframe_indices: list = None,
-    voxel_size: float = 0.01,
+    voxel_size: float = 0.04,
 ):
     """
     Save keyframes to NerfStudio format
