@@ -227,7 +227,10 @@ class RerunLogger:
 
             # Check if keyframe has been optimized by backend (N_updates >= min_updates_for_display)
             # This prevents logging unoptimized keyframes that may have incorrect poses (causing slips)
-            N_updates = keyframe.N_updates.item() if hasattr(keyframe, 'N_updates') else 0
+            if hasattr(keyframe, 'N_updates'):
+                N_updates = keyframe.N_updates.item() if hasattr(keyframe.N_updates, 'item') else keyframe.N_updates
+            else:
+                N_updates = 0
             is_optimized = N_updates >= self.min_updates_for_display
 
             # Log static content for new keyframes OR re-log pointcloud for dirty keyframes
@@ -386,7 +389,10 @@ class RerunLogger:
 
             # CRITICAL: Only log keyframes that have been optimized by backend (N_updates >= min_updates_for_display)
             # This prevents logging unoptimized keyframes with incorrect poses (causing slips/misalignments)
-            N_updates = keyframe.N_updates.item() if hasattr(keyframe, 'N_updates') else 0
+            if hasattr(keyframe, 'N_updates'):
+                N_updates = keyframe.N_updates.item() if hasattr(keyframe.N_updates, 'item') else keyframe.N_updates
+            else:
+                N_updates = 0
             if N_updates < self.min_updates_for_display:
                 continue
 
