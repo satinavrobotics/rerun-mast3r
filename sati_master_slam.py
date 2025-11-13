@@ -86,12 +86,13 @@ def main():
         save_dir = Path("logs") / cfg.save_as
         seq = Path(cfg.dataset).stem
 
-        # Save global fused pointcloud to PLY file
+        # Save global fused pointcloud to PLY file with voxel downsampling
         save_reconstruction_ply(
             savedir=save_dir,
             filename=f"{seq}.ply",
             keyframes=keyframes,
-            c_conf_threshold=cfg.conf_thresh
+            c_conf_threshold=cfg.conf_thresh,
+            voxel_size=0.01  # 1cm voxel size for smooth, clean reconstruction
         )
         print(f"[Full SLAM] ✓ Saved global reconstruction to {save_dir}/{seq}.ply")
 
@@ -112,6 +113,7 @@ def main():
                 confidence_thresh=cfg.conf_thresh,  # Use same threshold as PLY export
                 min_updates=2,  # Only include keyframes refined by backend (not just initialized)
                 keyframe_indices=logged_keyframe_indices,  # Only use keyframes that were logged during runtime
+                voxel_size=0.01,  # 1cm voxel size for smooth, clean reconstruction
             )
 
             # Log final pointcloud to Rerun

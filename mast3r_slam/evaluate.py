@@ -44,8 +44,16 @@ def save_ATE(
             f.write(f"{t} {x} {y} {z} {qx} {qy} {qz} {qw}\n")
 
 
-def save_reconstruction_ply(savedir, filename, keyframes: SharedKeyframes, c_conf_threshold):
-    """Save global fused pointcloud to .ply file (official MASt3R-SLAM version adapted for SharedKeyframes)"""
+def save_reconstruction_ply(savedir, filename, keyframes: SharedKeyframes, c_conf_threshold, voxel_size=0.01):
+    """Save global fused pointcloud to .ply file (official MASt3R-SLAM version adapted for SharedKeyframes)
+
+    Args:
+        savedir: Directory to save the PLY file
+        filename: Name of the PLY file
+        keyframes: SharedKeyframes object containing all keyframes
+        c_conf_threshold: Confidence threshold for filtering points
+        voxel_size: Voxel size for downsampling (default: 0.01m = 1cm). Set to None to disable downsampling.
+    """
     savedir = pathlib.Path(savedir)
     savedir.mkdir(exist_ok=True, parents=True)
     pointclouds = []
@@ -71,6 +79,26 @@ def save_reconstruction_ply(savedir, filename, keyframes: SharedKeyframes, c_con
     # Concatenate all keyframes into one global pointcloud
     pointclouds = np.concatenate(pointclouds, axis=0)
     colors = np.concatenate(colors, axis=0)
+
+    print(f"[PLY Export] Raw pointcloud: {len(pointclouds):,} points")
+
+    # Voxel downsample to remove duplicate/overlapping points and reduce blur
+    if voxel_size is not None and voxel_size > 0:
+        import open3d as o3d
+
+        # Create Open3D pointcloud
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(pointclouds)
+        pcd.colors = o3d.utility.Vector3dVector(colors.astype(np.float32) / 255.0)
+
+        # Voxel downsample (averages points within each voxel)
+        pcd_downsampled = pcd.voxel_down_sample(voxel_size=voxel_size)
+
+        # Extract downsampled points and colors
+        pointclouds = np.asarray(pcd_downsampled.points)
+        colors = (np.asarray(pcd_downsampled.colors) * 255).astype(np.uint8)
+
+        print(f"[PLY Export] Downsampled pointcloud (voxel_size={voxel_size}m): {len(pointclouds):,} points")
 
     save_ply(savedir / filename, pointclouds, colors)
 

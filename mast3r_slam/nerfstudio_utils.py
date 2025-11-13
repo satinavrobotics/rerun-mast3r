@@ -46,6 +46,7 @@ def save_kf_to_nerfstudio(
     confidence_thresh: float = 1.0,
     min_updates: int = 1,
     keyframe_indices: list = None,
+    voxel_size: float = 0.01,
 ):
     """
     Save keyframes to NerfStudio format
@@ -56,6 +57,8 @@ def save_kf_to_nerfstudio(
                         Filters out keyframes that were never optimized by the backend
     :param keyframe_indices: Optional list of keyframe indices to include (default: None = all keyframes)
                              If provided, only these keyframes will be exported (useful for matching runtime visualization)
+    :param voxel_size: Voxel size for downsampling the fused pointcloud (default: 0.01m = 1cm)
+                       Smaller = more detail but more points, larger = smoother but less detail
 
     :return: Open3D point cloud object
     """
@@ -178,6 +181,9 @@ def save_kf_to_nerfstudio(
     # stack all the point clouds
     pcd_positions: Float32[np.ndarray, "num_points 3"] = np.vstack(pcd_positions)
     pcd_colors: UInt8[np.ndarray, "num_points 3"] = np.vstack(pcd_colors)
+
+    print(f"[NerfStudio Export] Raw fused pointcloud: {len(pcd_positions):,} points")
+
     # normalize point colors to be between 0 and 1 and a float32
     pcd_colors: Float32[np.ndarray, "num_points 3"] = (
         pcd_colors.astype(np.float32) / 255.0
@@ -189,8 +195,11 @@ def save_kf_to_nerfstudio(
     pcd.points = o3d.utility.Vector3dVector(pcd_positions.astype(np.float64))
     pcd.colors = o3d.utility.Vector3dVector(pcd_colors.astype(np.float64))
 
-    # downsample the point cloud
-    pcd = pcd.voxel_down_sample(voxel_size=0.03)
+    # Voxel downsample to remove duplicate/overlapping points and reduce blur
+    # This averages points within each voxel, creating a cleaner reconstruction
+    pcd = pcd.voxel_down_sample(voxel_size=voxel_size)
+
+    print(f"[NerfStudio Export] Downsampled pointcloud (voxel_size={voxel_size}m): {len(pcd.points):,} points")
 
     # save point cloud to file
     o3d.io.write_point_cloud(str(ns_save_path / "sparse_pc.ply"), pcd)
