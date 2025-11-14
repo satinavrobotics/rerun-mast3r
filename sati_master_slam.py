@@ -167,15 +167,12 @@ def main():
             json_path.write_text(json.dumps(out, indent=2))
             print(f"[Trajectory JSON] Wrote {{'position':{len(positions)}, 'yaw':{len(yaws)}}} to {json_path}")
 
-    # Flush rerun data before exiting to ensure all data is sent to the server
+    # Give rerun time to send data before exiting
     if cfg.rerun_server_addr:
-        import rerun as rr
         import time
-        print("[Rerun] Flushing pending data to server...")
-        rr.flush(blocking=True)
-        # Give the gRPC client a moment to complete the flush
-        time.sleep(0.5)
-        print("[Rerun] ✓ Data flushed successfully")
+        print("[Rerun] Waiting for data to be sent to server...")
+        time.sleep(2.0)
+        print("[Rerun] ✓ Done")
 
 
 # ------------------------------------------------------------------
