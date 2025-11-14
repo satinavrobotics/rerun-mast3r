@@ -100,7 +100,7 @@ def main():
             voxel_size=0.01,  # 1cm voxel size for smooth, clean reconstruction
             keyframe_indices=logged_keyframe_indices,  # Only use keyframes that were logged during runtime
             min_depth=0.1,  # Match runtime visualization depth filtering
-            max_depth=4.2   # Match runtime visualization depth filtering
+            max_depth=3.8   # Match runtime visualization depth filtering
         )
         print(f"[Full SLAM] ✓ Saved global reconstruction to {save_dir}/{seq}.ply")
 
@@ -123,7 +123,7 @@ def main():
                 keyframe_indices=logged_keyframe_indices,  # Only use keyframes that were logged during runtime
                 voxel_size=0.01,  # 1cm voxel size for smooth, clean reconstruction
                 min_depth=0.1,  # Match runtime visualization depth filtering
-                max_depth=4.2   # Match runtime visualization depth filtering
+                max_depth=3.8   # Match runtime visualization depth filtering
             )
 
             # Log final pointcloud to Rerun
