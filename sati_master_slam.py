@@ -99,8 +99,8 @@ def main():
             c_conf_threshold=cfg.conf_thresh,
             voxel_size=0.03,  # 1cm voxel size for smooth, clean reconstruction
             keyframe_indices=logged_keyframe_indices,  # Only use keyframes that were logged during runtime
-            min_depth=0.1,  # Match in-memory pointmap depth filtering
-            max_depth=5.0   # Match in-memory pointmap depth filtering (redundant but safe)
+            min_depth=0.1,  # Match runtime visualization depth filtering
+            max_depth=3.5   # Tighter depth filter for export (runtime uses 5.0m)
         )
         print(f"[Full SLAM] ✓ Saved global reconstruction to {save_dir}/{seq}.ply")
 
@@ -122,8 +122,8 @@ def main():
                 min_updates=2,  # Only include keyframes refined by backend (not just initialized)
                 keyframe_indices=logged_keyframe_indices,  # Only use keyframes that were logged during runtime
                 voxel_size=0.03,  # 1cm voxel size for smooth, clean reconstruction
-                min_depth=0.1,  # Match in-memory pointmap depth filtering
-                max_depth=5.0   # Match in-memory pointmap depth filtering (redundant but safe)
+                min_depth=0.1,  # Match runtime visualization depth filtering
+                max_depth=3.5   # Tighter depth filter for export (runtime uses 5.0m)
             )
 
             # Log final pointcloud to Rerun
