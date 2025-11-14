@@ -52,9 +52,10 @@ class Frame:
         depth_values = X[:, 2]
         depth_mask = (depth_values >= min_depth) & (depth_values <= max_depth)
 
-        # Apply depth filter to both X and C
-        X = X[depth_mask]
-        C = C[depth_mask]
+        # Set confidence to 0 for points outside depth range (instead of removing them)
+        # This preserves tensor shape while effectively filtering out invalid points
+        C = C.clone()
+        C[~depth_mask] = 0.0
 
         if self.N == 0:
             self.X_canon = X.clone()
