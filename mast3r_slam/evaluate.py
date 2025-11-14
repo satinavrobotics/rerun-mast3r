@@ -44,7 +44,7 @@ def save_ATE(
             f.write(f"{t} {x} {y} {z} {qx} {qy} {qz} {qw}\n")
 
 
-def save_reconstruction_ply(savedir, filename, keyframes: SharedKeyframes, c_conf_threshold, voxel_size=0.01):
+def save_reconstruction_ply(savedir, filename, keyframes: SharedKeyframes, c_conf_threshold, voxel_size=0.01, keyframe_indices=None):
     """Save global fused pointcloud to .ply file (official MASt3R-SLAM version adapted for SharedKeyframes)
 
     Args:
@@ -53,12 +53,23 @@ def save_reconstruction_ply(savedir, filename, keyframes: SharedKeyframes, c_con
         keyframes: SharedKeyframes object containing all keyframes
         c_conf_threshold: Confidence threshold for filtering points
         voxel_size: Voxel size for downsampling (default: 0.01m = 1cm). Set to None to disable downsampling.
+        keyframe_indices: Optional list of keyframe indices to include (default: None = all keyframes)
+                         If provided, only these keyframes will be exported (useful for matching runtime visualization)
     """
     savedir = pathlib.Path(savedir)
     savedir.mkdir(exist_ok=True, parents=True)
     pointclouds = []
     colors = []
-    for i in range(len(keyframes)):
+
+    # Determine which keyframes to process
+    if keyframe_indices is not None:
+        indices_to_process = keyframe_indices
+        print(f"[PLY Export] Using {len(indices_to_process)} keyframes from logged list (total keyframes: {len(keyframes)})")
+    else:
+        indices_to_process = range(len(keyframes))
+        print(f"[PLY Export] Using all {len(keyframes)} keyframes")
+
+    for i in indices_to_process:
         keyframe = keyframes[i]
         if config["use_calib"]:
             X_canon = constrain_points_to_ray(

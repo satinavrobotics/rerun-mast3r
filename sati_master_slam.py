@@ -86,13 +86,19 @@ def main():
         save_dir = Path("logs") / cfg.save_as
         seq = Path(cfg.dataset).stem
 
+        # Get list of keyframe indices that were actually logged during runtime
+        # This ensures the PLY export matches what was displayed during SLAM (no slips from unoptimized keyframes)
+        logged_keyframe_indices = rr_logger.keyframe_logged_list if rr_logger is not None else None
+
         # Save global fused pointcloud to PLY file with voxel downsampling
+        # Only use keyframes that were logged during runtime (passed N_updates >= 2 filter)
         save_reconstruction_ply(
             savedir=save_dir,
             filename=f"{seq}.ply",
             keyframes=keyframes,
             c_conf_threshold=cfg.conf_thresh,
-            voxel_size=0.01  # 1cm voxel size for smooth, clean reconstruction
+            voxel_size=0.01,  # 1cm voxel size for smooth, clean reconstruction
+            keyframe_indices=logged_keyframe_indices  # Only use keyframes that were logged during runtime
         )
         print(f"[Full SLAM] ✓ Saved global reconstruction to {save_dir}/{seq}.ply")
 
@@ -160,6 +166,16 @@ def main():
             json_path = Path(cfg.save_as + "_traj_data.json")
             json_path.write_text(json.dumps(out, indent=2))
             print(f"[Trajectory JSON] Wrote {{'position':{len(positions)}, 'yaw':{len(yaws)}}} to {json_path}")
+
+    # Flush rerun data before exiting to ensure all data is sent to the server
+    if cfg.rerun_server_addr:
+        import rerun as rr
+        import time
+        print("[Rerun] Flushing pending data to server...")
+        rr.flush(blocking=True)
+        # Give the gRPC client a moment to complete the flush
+        time.sleep(0.5)
+        print("[Rerun] ✓ Data flushed successfully")
 
 
 # ------------------------------------------------------------------
