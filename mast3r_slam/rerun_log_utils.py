@@ -292,6 +292,11 @@ class RerunLogger:
                             ),
                         )
 
+                    # Track that this keyframe was actually logged with pointcloud
+                    # Only add to list if pointcloud was logged (ensures final mesh matches runtime visualization)
+                    if is_new_keyframe and kf_idx not in self.keyframe_logged_list:
+                        self.keyframe_logged_list.append(kf_idx)
+
                 # Log pinhole camera parameters only for new keyframes
                 if is_new_keyframe:
                     rr.log(
@@ -305,8 +310,6 @@ class RerunLogger:
                             image_plane_distance=self.image_plane_distance,
                         ),
                     )
-
-                    self.keyframe_logged_list.append(kf_idx)
 
             # ALWAYS update Transform3D with latest optimized pose (even for existing keyframes)
             # This is critical: when backend optimizes poses, we need to update the transform
