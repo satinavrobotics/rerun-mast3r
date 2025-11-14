@@ -57,7 +57,7 @@ class RerunLogger:
         # Z-axis in camera frame is depth (forward direction)
         # This prevents long streaks extending far behind the camera
         self.min_depth = 0.1  # Minimum depth in meters (avoid points too close/behind camera)
-        self.max_depth = 3.8  # Maximum depth in meters (tighter constraint for cleaner reconstruction)
+        self.max_depth = 3.0  # Maximum depth in meters (tighter constraint for cleaner reconstruction)
 
         # Localization filtering: Only show pointclouds for well-localized keyframes
         # Keyframes with N_updates >= min_updates have been refined by tracking/optimization

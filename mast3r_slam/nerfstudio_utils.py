@@ -48,7 +48,7 @@ def save_kf_to_nerfstudio(
     keyframe_indices: list = None,
     voxel_size: float = 2.0,
     min_depth: float = 0.1,
-    max_depth: float = 3.8,
+    max_depth: float = 3.0,
 ):
     """
     Save keyframes to NerfStudio format
@@ -62,7 +62,7 @@ def save_kf_to_nerfstudio(
     :param voxel_size: Voxel size for downsampling the fused pointcloud (default: 0.01m = 1cm)
                        Smaller = more detail but more points, larger = smoother but less detail
     :param min_depth: Minimum depth in meters (default: 0.1m). Points closer than this are filtered out.
-    :param max_depth: Maximum depth in meters (default: 3.8m). Points farther than this are filtered out.
+    :param max_depth: Maximum depth in meters (default: 3.0m). Points farther than this are filtered out.
 
     :return: Open3D point cloud object
     """
