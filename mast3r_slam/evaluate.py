@@ -44,7 +44,7 @@ def save_ATE(
             f.write(f"{t} {x} {y} {z} {qx} {qy} {qz} {qw}\n")
 
 
-def save_reconstruction_ply(savedir, filename, keyframes: SharedKeyframes, c_conf_threshold, voxel_size=0.01, keyframe_indices=None):
+def save_reconstruction_ply(savedir, filename, keyframes: SharedKeyframes, c_conf_threshold, voxel_size=0.01, keyframe_indices=None, min_depth=0.1, max_depth=5.0):
     """Save global fused pointcloud to .ply file (official MASt3R-SLAM version adapted for SharedKeyframes)
 
     Args:
@@ -55,6 +55,8 @@ def save_reconstruction_ply(savedir, filename, keyframes: SharedKeyframes, c_con
         voxel_size: Voxel size for downsampling (default: 0.01m = 1cm). Set to None to disable downsampling.
         keyframe_indices: Optional list of keyframe indices to include (default: None = all keyframes)
                          If provided, only these keyframes will be exported (useful for matching runtime visualization)
+        min_depth: Minimum depth in meters (default: 0.1m). Points closer than this are filtered out.
+        max_depth: Maximum depth in meters (default: 5.0m). Points farther than this are filtered out.
     """
     savedir = pathlib.Path(savedir)
     savedir.mkdir(exist_ok=True, parents=True)
@@ -76,16 +78,34 @@ def save_reconstruction_ply(savedir, filename, keyframes: SharedKeyframes, c_con
                 keyframe.img_shape.flatten()[:2], keyframe.X_canon[None], keyframe.K
             )
             keyframe.X_canon = X_canon.squeeze(0)
-        # Transform to world frame using T_WC
-        pW = keyframe.T_WC.act(keyframe.X_canon).cpu().numpy().reshape(-1, 3)
+
+        # Get positions in camera frame (before world transform)
+        positions_cam = keyframe.X_canon.cpu().numpy().reshape(-1, 3)
         color = (keyframe.uimg.cpu().numpy() * 255).astype(np.uint8).reshape(-1, 3)
+
         # Filter by confidence threshold
-        valid = (
+        conf_valid = (
             keyframe.get_average_conf().cpu().numpy().astype(np.float32).reshape(-1)
             > c_conf_threshold
         )
-        pointclouds.append(pW[valid])
-        colors.append(color[valid])
+
+        # Filter by depth (Z-axis in camera frame)
+        # This matches the filtering applied during runtime visualization
+        depth_values = positions_cam[:, 2]  # Z-coordinate is depth
+        depth_valid = (depth_values >= min_depth) & (depth_values <= max_depth)
+
+        # Combine confidence and depth filters
+        valid = conf_valid & depth_valid
+
+        # Apply filters and transform to world frame
+        positions_cam_filtered = positions_cam[valid]
+        color_filtered = color[valid]
+
+        # Transform to world frame using T_WC
+        pW = keyframe.T_WC.act(torch.from_numpy(positions_cam_filtered).to(keyframe.T_WC.device)).cpu().numpy()
+
+        pointclouds.append(pW)
+        colors.append(color_filtered)
 
     # Concatenate all keyframes into one global pointcloud
     pointclouds = np.concatenate(pointclouds, axis=0)
