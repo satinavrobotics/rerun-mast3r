@@ -48,7 +48,7 @@ def save_kf_to_nerfstudio(
     keyframe_indices: list = None,
     voxel_size: float = 2.0,
     min_depth: float = 0.1,
-    max_depth: float = 3.5,
+    max_depth: float = 5.0,
 ):
     """
     Save keyframes to NerfStudio format
@@ -62,7 +62,7 @@ def save_kf_to_nerfstudio(
     :param voxel_size: Voxel size for downsampling the fused pointcloud (default: 0.01m = 1cm)
                        Smaller = more detail but more points, larger = smoother but less detail
     :param min_depth: Minimum depth in meters (default: 0.1m). Points closer than this are filtered out.
-    :param max_depth: Maximum depth in meters (default: 3.5m). Points farther than this are filtered out.
+    :param max_depth: Maximum depth in meters (default: 5.0m). Points farther than this are filtered out.
 
     :return: Open3D point cloud object
     """
@@ -125,21 +125,22 @@ def save_kf_to_nerfstudio(
         positions: Float32[np.ndarray, "num_points 3"] = keyframe.X_canon.cpu().numpy()
         colors: UInt8[np.ndarray, "num_points 3"] = rgb_img.reshape(-1, 3)
 
-        # Filter by confidence threshold
+        # Filter by confidence threshold FIRST (matches runtime visualization order)
         conf_mask = keyframe.C.cpu().numpy() > confidence_thresh
         conf_mask = conf_mask.squeeze()  # Remove the trailing dimension to get a 1D boolean array
 
-        # Filter by depth (Z-axis in camera frame)
+        # Apply confidence mask first
+        conf_positions = positions[conf_mask]
+        conf_colors = colors[conf_mask]
+
+        # Filter by depth (Z-axis in camera frame) on confidence-filtered points
         # This matches the filtering applied during runtime visualization
-        depth_values = positions[:, 2]  # Z-coordinate is depth
+        depth_values = conf_positions[:, 2]  # Z-coordinate is depth
         depth_mask = (depth_values >= min_depth) & (depth_values <= max_depth)
 
-        # Combine confidence and depth filters
-        combined_mask = conf_mask & depth_mask
-
-        # Apply combined filter
-        masked_positions = positions[combined_mask]
-        masked_colors = colors[combined_mask]
+        # Apply depth filter
+        masked_positions = conf_positions[depth_mask]
+        masked_colors = conf_colors[depth_mask]
 
         # Apply ceiling filter based on LOCAL Y-range in camera coordinates
         # Each pointcloud is filtered independently based on its own Y-distribution

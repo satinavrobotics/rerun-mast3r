@@ -44,7 +44,7 @@ def save_ATE(
             f.write(f"{t} {x} {y} {z} {qx} {qy} {qz} {qw}\n")
 
 
-def save_reconstruction_ply(savedir, filename, keyframes: SharedKeyframes, c_conf_threshold, voxel_size=0.01, keyframe_indices=None, min_depth=0.1, max_depth=3.5):
+def save_reconstruction_ply(savedir, filename, keyframes: SharedKeyframes, c_conf_threshold, voxel_size=0.01, keyframe_indices=None, min_depth=0.1, max_depth=5.0):
     """Save global fused pointcloud to .ply file (official MASt3R-SLAM version adapted for SharedKeyframes)
 
     Args:
@@ -56,7 +56,7 @@ def save_reconstruction_ply(savedir, filename, keyframes: SharedKeyframes, c_con
         keyframe_indices: Optional list of keyframe indices to include (default: None = all keyframes)
                          If provided, only these keyframes will be exported (useful for matching runtime visualization)
         min_depth: Minimum depth in meters (default: 0.1m). Points closer than this are filtered out.
-        max_depth: Maximum depth in meters (default: 3.5m). Points farther than this are filtered out.
+        max_depth: Maximum depth in meters (default: 5.0m). Points farther than this are filtered out.
     """
     savedir = pathlib.Path(savedir)
     savedir.mkdir(exist_ok=True, parents=True)
@@ -83,23 +83,24 @@ def save_reconstruction_ply(savedir, filename, keyframes: SharedKeyframes, c_con
         positions_cam = keyframe.X_canon.cpu().numpy().reshape(-1, 3)
         color = (keyframe.uimg.cpu().numpy() * 255).astype(np.uint8).reshape(-1, 3)
 
-        # Filter by confidence threshold
+        # Filter by confidence threshold FIRST (matches runtime visualization order)
         conf_valid = (
             keyframe.get_average_conf().cpu().numpy().astype(np.float32).reshape(-1)
             > c_conf_threshold
         )
 
-        # Filter by depth (Z-axis in camera frame)
+        # Apply confidence mask first
+        positions_cam_conf = positions_cam[conf_valid]
+        color_conf = color[conf_valid]
+
+        # Filter by depth (Z-axis in camera frame) on confidence-filtered points
         # This matches the filtering applied during runtime visualization
-        depth_values = positions_cam[:, 2]  # Z-coordinate is depth
+        depth_values = positions_cam_conf[:, 2]  # Z-coordinate is depth
         depth_valid = (depth_values >= min_depth) & (depth_values <= max_depth)
 
-        # Combine confidence and depth filters
-        valid = conf_valid & depth_valid
-
-        # Apply filters and transform to world frame
-        positions_cam_filtered = positions_cam[valid]
-        color_filtered = color[valid]
+        # Apply depth filter
+        positions_cam_filtered = positions_cam_conf[depth_valid]
+        color_filtered = color_conf[depth_valid]
 
         # Transform to world frame using T_WC
         pW = keyframe.T_WC.act(torch.from_numpy(positions_cam_filtered).to(keyframe.T_WC.device)).cpu().numpy()
