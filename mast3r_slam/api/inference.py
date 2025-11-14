@@ -103,7 +103,7 @@ class InferenceConfig:
     rerun_server_addr: str | None = None  # Optional rerun server address (e.g., "master_slam_cli:9878")
     real_time: bool = False  # Real-time mode: output pose after each frame instead of at the end
     full_slam: bool = False  # Full SLAM mode: build and export global fused pointcloud (dense reconstruction)
-    conf_thresh: float = 0.0  # Confidence threshold for pointcloud filtering (C_conf from config)
+    conf_thresh: float = 1.5  # Confidence threshold for pointcloud filtering (matches runtime visualization)
     custom_shaders: bool = False  # Custom shader mode: replicate OpenGL shader behavior with mesh-based reconstruction (experimental)
     log_trajectory_json: bool = False  # Export trajectory to JSON file (for debugging/analysis)
 
