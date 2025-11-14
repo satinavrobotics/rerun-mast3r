@@ -97,7 +97,7 @@ def main():
             filename=f"{seq}.ply",
             keyframes=keyframes,
             c_conf_threshold=cfg.conf_thresh,
-            voxel_size=0.05,  # 1cm voxel size for smooth, clean reconstruction
+            voxel_size=0.03,  # 1cm voxel size for smooth, clean reconstruction
             keyframe_indices=logged_keyframe_indices,  # Only use keyframes that were logged during runtime
             min_depth=0.1,  # Match runtime visualization depth filtering
             max_depth=5.0   # Match runtime visualization depth filtering
@@ -121,7 +121,7 @@ def main():
                 confidence_thresh=cfg.conf_thresh,  # Use same threshold as PLY export
                 min_updates=2,  # Only include keyframes refined by backend (not just initialized)
                 keyframe_indices=logged_keyframe_indices,  # Only use keyframes that were logged during runtime
-                voxel_size=0.01,  # 1cm voxel size for smooth, clean reconstruction
+                voxel_size=0.03,  # 1cm voxel size for smooth, clean reconstruction
                 min_depth=0.1,  # Match runtime visualization depth filtering
                 max_depth=5.0   # Match runtime visualization depth filtering
             )

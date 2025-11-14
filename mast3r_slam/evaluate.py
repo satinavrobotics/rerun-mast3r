@@ -44,7 +44,7 @@ def save_ATE(
             f.write(f"{t} {x} {y} {z} {qx} {qy} {qz} {qw}\n")
 
 
-def save_reconstruction_ply(savedir, filename, keyframes: SharedKeyframes, c_conf_threshold, voxel_size=0.01, keyframe_indices=None, min_depth=0.1, max_depth=5.0):
+def save_reconstruction_ply(savedir, filename, keyframes: SharedKeyframes, c_conf_threshold, voxel_size=0.03, keyframe_indices=None, min_depth=0.1, max_depth=5.0):
     """Save global fused pointcloud to .ply file (official MASt3R-SLAM version adapted for SharedKeyframes)
 
     Args:
@@ -52,7 +52,7 @@ def save_reconstruction_ply(savedir, filename, keyframes: SharedKeyframes, c_con
         filename: Name of the PLY file
         keyframes: SharedKeyframes object containing all keyframes
         c_conf_threshold: Confidence threshold for filtering points
-        voxel_size: Voxel size for downsampling (default: 0.01m = 1cm). Set to None to disable downsampling.
+        voxel_size: Voxel size for downsampling (default: 0.03m = 1cm). Set to None to disable downsampling.
         keyframe_indices: Optional list of keyframe indices to include (default: None = all keyframes)
                          If provided, only these keyframes will be exported (useful for matching runtime visualization)
         min_depth: Minimum depth in meters (default: 0.1m). Points closer than this are filtered out.
