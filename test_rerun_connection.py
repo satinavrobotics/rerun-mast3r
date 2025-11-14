@@ -16,27 +16,38 @@ rr.init("connection-test", spawn=False)
 server_addr = "master_slam_cli:9878"
 print(f"[Test] Connecting to rerun server at {server_addr}...")
 rr.connect_grpc(f"rerun+http://{server_addr}/proxy", flush_timeout_sec=0.1)
-print(f"[Test] ✓ Connected")
+print(f"[Test] ✓ Connected to gRPC proxy")
+print("")
+print("=" * 80)
+print("IMPORTANT: You must have a Rerun viewer connected to see the data!")
+print("=" * 80)
+print("")
+print("On your local Mac, run this command NOW:")
+print("  rerun --connect rerun+http://127.0.0.1:9878/proxy")
+print("")
+print("Waiting 10 seconds for you to start the viewer...")
+for i in range(10, 0, -1):
+    print(f"  {i}...", end="\r")
+    time.sleep(1)
+print("")
+print("[Test] Starting to send test data...")
+print("")
 
-# Send test data
-print("[Test] Sending test data...")
-for i in range(10):
+# Send test data continuously
+for i in range(30):
     # Log a moving point
     rr.set_time_sequence("frame", i)
     rr.log("test/point", rr.Points3D([[i * 0.1, 0, 0]], colors=[[255, 0, 0]], radii=[0.05]))
-    rr.log("test/text", rr.TextDocument(f"Frame {i}"))
+    rr.log("test/text", rr.TextDocument(f"Frame {i}\nIf you see this, the connection is working!"))
     print(f"[Test] Logged frame {i}")
     time.sleep(0.5)
 
-print("[Test] ✓ Sent 10 frames")
+print("")
+print("[Test] ✓ Sent 30 frames")
 print("[Test] Waiting 3 seconds for data to be transmitted...")
 time.sleep(3)
 print("[Test] ✓ Done")
 print("")
-print("If you have a Rerun viewer connected to the CLI server, you should see:")
-print("  - A red point moving along the X-axis")
-print("  - Text showing 'Frame 0' through 'Frame 9'")
-print("")
-print("To connect a viewer from your local PC, run:")
-print(f"  rerun --connect rerun+http://127.0.0.1:9878/proxy")
+print("If you saw a red point moving along the X-axis in your viewer, the connection works!")
+print("If you didn't see anything, the viewer might not be connected to the proxy.")
 
