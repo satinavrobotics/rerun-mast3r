@@ -41,6 +41,8 @@ tracking:
   depth_eps: 1e-6 # Only in calib case
   filtering_mode: first # recent, first, best_score, weighted_pointmap, weighted_spherical, indep_conf
   filtering_score: median # median, mean (only used for filtering_mode=best_score)
+  min_depth: 0.1 # Minimum depth in meters for pointmap filtering (filter points too close/behind camera)
+  max_depth: 5.0 # Maximum depth in meters for pointmap filtering (filter far-away noisy points)
 
 local_opt:
   pin: 1

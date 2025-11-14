@@ -42,6 +42,20 @@ class Frame:
     def update_pointmap(self, X: torch.Tensor, C: torch.Tensor):
         filtering_mode = config["tracking"]["filtering_mode"]
 
+        # Filter by depth BEFORE storing in X_canon
+        # This ensures in-memory pointclouds only contain valid depth points
+        # Prevents far-away noisy points from being used in tracking/optimization
+        min_depth = config["tracking"].get("min_depth", 0.1)
+        max_depth = config["tracking"].get("max_depth", 5.0)
+
+        # X shape: (num_points, 3) where X[:, 2] is Z (depth in camera frame)
+        depth_values = X[:, 2]
+        depth_mask = (depth_values >= min_depth) & (depth_values <= max_depth)
+
+        # Apply depth filter to both X and C
+        X = X[depth_mask]
+        C = C[depth_mask]
+
         if self.N == 0:
             self.X_canon = X.clone()
             self.C = C.clone()
