@@ -147,16 +147,33 @@ async def slam_init(request: SlamInitRequest):
 
     Creates an in-memory SLAM session that persists until finalized.
     """
-    if request.session_id in active_sessions:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Session {request.session_id} already exists. Use a different session_id or finalize the existing session."
-        )
+    sid = request.session_id
+
+    if sid in active_sessions:
+        old = active_sessions[sid]
+        # Treat zero-frame, zero-pose sessions as stale and overwrite them
+        if getattr(old, "frame_count", 0) == 0 and len(getattr(old, "poses", [])) == 0:
+            print(f"[SLAM API] Overwriting stale empty session {sid}")
+            try:
+                old.finalize(save_as=f"{sid}_stale")
+            except Exception as e:
+                print(f"[SLAM API] Failed to finalize stale session {sid}: {e}")
+            finally:
+                try:
+                    del active_sessions[sid]
+                except KeyError:
+                    pass
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Session {sid} already exists and has data. "
+                       f"Use a different session_id or finalize the existing session."
+            )
 
     try:
         # Create in-memory SLAM session
         session = SLAMSession(
-            session_id=request.session_id,
+            session_id=sid,
             config_path=request.config_path,
             img_size=request.img_size,
             real_time=request.real_time,
@@ -169,11 +186,11 @@ async def slam_init(request: SlamInitRequest):
         session.initialize_real_time_mode()
 
         # Store session
-        active_sessions[request.session_id] = session
+        active_sessions[sid] = session
 
         return {
             "status": "success",
-            "session_id": request.session_id,
+            "session_id": sid,
             "mode": "real-time" if request.real_time else "batch",
             "message": "SLAM session initialized. Ready to receive frames."
         }
