@@ -130,7 +130,7 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
             rr.disconnect()
         except Exception:
             pass
-        rr.init(rec_id=rec_id, spawn=False)
+        rr.init(application_id="mast3r_slam", recording_id=rec_id, spawn=False)
 
         # Connect to rerun web server via gRPC
         # The CLI container runs `rerun --serve-web` which accepts gRPC connections and serves web viewer
@@ -140,7 +140,6 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
         # Clear any previous recording state so new sessions start clean
         try:
             rr.send_clear(recursive=True)
-            rr.new_recording(rec_id=rec_id)
             print(f"[SLAM Inference] Cleared previous rerun state and started recording '{rec_id}'")
         except Exception as e:
             print(f"[SLAM Inference] WARNING: Failed to clear rerun state: {e}")
