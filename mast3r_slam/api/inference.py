@@ -131,7 +131,8 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
         # Clear any previous recording state so new sessions start clean
         try:
             rr.send_clear(recursive=True)
-            print(f"[SLAM Inference] Cleared previous rerun recording state")
+            rr.new_recording(rec_id=str(inf_config.save_as))
+            print(f"[SLAM Inference] Cleared previous rerun state and started recording '{inf_config.save_as}'")
         except Exception as e:
             print(f"[SLAM Inference] WARNING: Failed to clear rerun state: {e}")
 
