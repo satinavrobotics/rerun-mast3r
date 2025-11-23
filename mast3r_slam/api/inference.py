@@ -3,6 +3,7 @@ import sys
 import time
 import lietorch
 import torch
+import time
 from mast3r_slam.global_opt import FactorGraph
 
 from mast3r_slam.config import load_config, config
@@ -123,6 +124,14 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
         # This ensures we use the same recording across all threads
         print(f"[SLAM Inference] Using existing global recording stream")
 
+        # Force a fresh recording id to avoid reusing old rerun state
+        rec_id = f"{inf_config.save_as}_{int(time.time())}"
+        try:
+            rr.disconnect()
+        except Exception:
+            pass
+        rr.init(rec_id=rec_id, spawn=False)
+
         # Connect to rerun web server via gRPC
         # The CLI container runs `rerun --serve-web` which accepts gRPC connections and serves web viewer
         print(f"[SLAM Inference] Connecting to rerun server at {inf_config.rerun_server_addr}")
@@ -131,8 +140,8 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
         # Clear any previous recording state so new sessions start clean
         try:
             rr.send_clear(recursive=True)
-            rr.new_recording(rec_id=str(inf_config.save_as))
-            print(f"[SLAM Inference] Cleared previous rerun state and started recording '{inf_config.save_as}'")
+            rr.new_recording(rec_id=rec_id)
+            print(f"[SLAM Inference] Cleared previous rerun state and started recording '{rec_id}'")
         except Exception as e:
             print(f"[SLAM Inference] WARNING: Failed to clear rerun state: {e}")
 
