@@ -128,6 +128,12 @@ def mast3r_slam_inference(inf_config: InferenceConfig):
         print(f"[SLAM Inference] Connecting to rerun server at {inf_config.rerun_server_addr}")
         rr.connect_grpc(f"rerun+http://{inf_config.rerun_server_addr}/proxy", flush_timeout_sec=0.1)
         print(f"[SLAM Inference] ✓ Connected via gRPC (view at http://localhost:9090)")
+        # Clear any previous recording state so new sessions start clean
+        try:
+            rr.send_clear(recursive=True)
+            print(f"[SLAM Inference] Cleared previous rerun recording state")
+        except Exception as e:
+            print(f"[SLAM Inference] WARNING: Failed to clear rerun state: {e}")
 
     parent_log_path = Path("/world")
     # Only log per-keyframe pointclouds if --full-slam is enabled WITHOUT --custom-shaders
