@@ -214,6 +214,7 @@ class SLAMSession:
         real_time: bool = False,
         rerun_server_addr: Optional[str] = None,
         enable_rerun: bool = True,  # New parameter to control rerun visualization
+        full_slam: bool = False,  # Enable per-keyframe pointcloud logging (no final fused export)
         output_dir: str = "logs"
     ):
         self.session_id = session_id
@@ -222,6 +223,7 @@ class SLAMSession:
         self.real_time = real_time
         self.rerun_server_addr = rerun_server_addr if enable_rerun else None
         self.enable_rerun = enable_rerun
+        self.full_slam = full_slam
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -273,6 +275,7 @@ class SLAMSession:
         print(f"  Rerun: {'Enabled' if self.enable_rerun else 'Disabled'}")
         if self.enable_rerun:
             print(f"  Rerun server: {self.rerun_server_addr}")
+        print(f"  Full SLAM: {'Enabled' if self.full_slam else 'Disabled'}")
         print(f"  Output: {self.pose_file_path}")
     
     def initialize_real_time_mode(self):
@@ -392,6 +395,8 @@ class SLAMSession:
 
             if self.rerun_server_addr:
                 args.extend(["--rerun-server-addr", self.rerun_server_addr])
+            if self.full_slam:
+                args.append("--full-slam")
 
             print(f"[SLAM Session {self.session_id}] tyro.cli args: {args}")
 
@@ -750,4 +755,3 @@ class SLAMSession:
             "trajectory": trajectory,
             "output_file": str(traj_file)
         }
-

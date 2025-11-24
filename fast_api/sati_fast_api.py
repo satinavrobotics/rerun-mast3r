@@ -56,6 +56,7 @@ class SlamInitRequest(BaseModel):
     rerun_server_addr: Optional[str] = "master_slam_cli:9878"
     enable_rerun: bool = True  # Enable/disable rerun visualization
     real_time: bool = True  # Real-time mode: process frames incrementally
+    full_slam: bool = False  # Enable per-keyframe pointcloud logging (no final fused export)
 
 class SlamFrameRequest(BaseModel):
     """Real-time streaming: Process single frame"""
@@ -179,6 +180,7 @@ async def slam_init(request: SlamInitRequest):
             real_time=request.real_time,
             rerun_server_addr=request.rerun_server_addr,
             enable_rerun=request.enable_rerun,
+            full_slam=request.full_slam,
             output_dir="/workspace/rerun_mast3r/logs"
         )
 
@@ -422,4 +424,3 @@ async def cleanup_all_sessions():
         "errors": errors,
         "remaining_sessions": len(active_sessions)
     }
-
