@@ -51,7 +51,7 @@ class EstimatePoseRequest(BaseModel):
 class SlamInitRequest(BaseModel):
     """Real-time streaming: Initialize SLAM session"""
     session_id: str
-    config_path: str = "config/base.yaml"
+    config_path: str = "config/eth3d.yaml"
     img_size: int = 512
     rerun_server_addr: Optional[str] = "master_slam_cli:9878"
     enable_rerun: bool = True  # Enable/disable rerun visualization
