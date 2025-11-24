@@ -62,7 +62,9 @@ class RerunLogger:
         # Localization filtering: Only show pointclouds for well-localized keyframes
         # Keyframes with N_updates >= min_updates have been refined by tracking/optimization
         # NOTE: N_updates=1 means initial observation, N_updates=2+ means refined by backend
-        self.min_updates_for_display = 2  # Require at least 2 updates (refined by backend)
+        # In streaming, backend updates can be sparse; when full_slam logging is requested,
+        # allow pointcloud logging after first update to avoid never logging.
+        self.min_updates_for_display = 1 if self.log_pointclouds else 2
 
     def _filter_ceiling_local(self, positions, colors, mat4x4):
         """
