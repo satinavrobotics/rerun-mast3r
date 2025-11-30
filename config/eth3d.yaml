@@ -1,4 +1,4 @@
-inherit: "/workspace/rerun_mast3r/config/eth3d.yaml"
+inherit: "/workspace/rerun_mast3r/config/eval_calib.yaml"
 
 dataset:
   subsample: 1
