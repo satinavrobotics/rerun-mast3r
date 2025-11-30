@@ -1,4 +1,4 @@
-inherit: "config/base.yaml"
+inherit: "/workspace/rerun_mast3r/config/base.yaml"
 
 use_calib: True
 single_thread: True
